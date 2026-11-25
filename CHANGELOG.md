@@ -1,4 +1,13 @@
 
+## [0.3.0](https://github.com/laft-linux/stav/compare/v0.2.0...v0.3.0) - 2026-11-25
+
+### ⛰️  Features
+
+- *(ast)* Expose the doc comment of a node - ([d19e67e](https://github.com/laft-linux/stav/commit/d19e67e093f5859e0e977c22db9a2cdc93f7f7bd))
+- *(check)* Suggest true and false for misspelled bools - ([0558eed](https://github.com/laft-linux/stav/commit/0558eeded13070910911559f96cf199c73b62a05))
+- *(check)* Tell builtin type names apart - ([76727c3](https://github.com/laft-linux/stav/commit/76727c3b6c863da8e8d0a8d9453c0cc75a02c731))
+- *(lexer)* [**breaking**] Let a symbol word carry a brace group - ([11fef8e](https://github.com/laft-linux/stav/commit/11fef8e4b87208436f8fc23bd920af6228ffcb98))
+
 ## [0.2.0](https://github.com/QaidVoid/stav/compare/v0.1.0...v0.2.0) - 2026-10-29
 
 ### ⛰️  Features
