@@ -1,0 +1,74 @@
+name: Release binaries
+
+# Builds static stav binaries for a release tag and attaches them to its
+# GitHub release. Release-plz calls it after a release; run it by hand to
+# add binaries to an existing release.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, for example v0.2.0.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag, for example v0.2.0.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      TAG: ${{ inputs.tag }}
+      TARGET: ${{ matrix.target }}
+      ASSET: stav-${{ matrix.arch }}-linux.tar.xz
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ff7f6a3374ce205788da40198ec918bd5d67aea7 # 1.99.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: |
+          rustup target add "$TARGET"
+          cargo build --release --locked --target "$TARGET" -p stav-cli
+      - name: Check that the binary is static
+        run: |
+          bin="target/$TARGET/release/stav"
+          if readelf -lW "$bin" | grep -q INTERP; then
+            echo "$bin has a dynamic loader" >&2
+            exit 1
+          fi
+          "$bin" --version
+      - name: Package
+        run: |
+          mkdir staging
+          cp "target/$TARGET/release/stav" LICENSE-APACHE LICENSE-MIT README.md staging/
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
+            -C staging -cJf "$ASSET" stav LICENSE-APACHE LICENSE-MIT README.md
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"

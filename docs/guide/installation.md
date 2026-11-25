@@ -22,6 +22,16 @@ stav --version
 stav 0.1.0
 ```
 
+### Prebuilt binaries
+
+Every release on [GitHub](https://github.com/laft-linux/stav/releases) has a statically linked `stav` for Linux on x86_64 and aarch64. It runs on any distribution without Rust installed. For aarch64, replace `x86_64` with `aarch64`:
+
+```sh
+curl -LO https://github.com/laft-linux/stav/releases/latest/download/stav-x86_64-linux.tar.xz
+tar -xf stav-x86_64-linux.tar.xz stav
+install -m755 stav ~/.local/bin/
+```
+
 ### From a checkout
 
 To build the latest development version, clone the repository and install the command from it:
