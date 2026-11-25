@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 import { birch, stavLanguage, tar } from './syntax'
 
-const repo = 'https://github.com/QaidVoid/stav'
+const repo = 'https://github.com/laft-linux/stav'
 
 export default defineConfig({
   title: 'Stav',

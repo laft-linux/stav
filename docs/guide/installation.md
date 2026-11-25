@@ -27,7 +27,7 @@ stav 0.1.0
 To build the latest development version, clone the repository and install the command from it:
 
 ```sh
-git clone https://github.com/QaidVoid/stav
+git clone https://github.com/laft-linux/stav
 cd stav
 cargo install --path crates/stav-cli
 ```
