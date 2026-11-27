@@ -136,7 +136,7 @@ upstream backup {
 
 - A field without a default whose type is not an `Option` is required. A required field that is still missing in the final value is [E0801](/reference/error-codes#e0801).
 - A field of type `Option<T>` without a default defaults to `none`.
-- A default is an expression evaluated in the scope of the file that declares the struct. It may read other fields through [`self`](/guide/self). A default has the lowest [priority](/reference/merging), so any assignment replaces it.
+- A default is an expression evaluated in the scope of the file that declares the struct. It may read other fields through [`self`](/guide/self). A default has the lowest [priority](/reference/merging). It is evaluated only when it fills a field, and at most once per field it fills. A losing default never runs, even without `self`. [Declared defaults](/reference/merging#declared-defaults) describes how higher contributions override it.
 - A field cannot hold a function or a part, at any depth ([E0412](/reference/error-codes#e0412)). Functions and parts are not data.
 - A type cannot contain itself, directly or through `List`, `Set`, `Map`, `Option` or a variant payload ([E0410](/reference/error-codes#e0410)). Every value is therefore a finite tree. To point at another value, use a [reference](#references).
 

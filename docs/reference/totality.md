@@ -4,7 +4,7 @@ Evaluation of a Stav program that type checks always terminates. No program can 
 
 ## The rules
 
-The checker enforces each of these rules before anything is evaluated, except the last check of `self` dependencies, which runs once the merge has picked its winners.
+The checker enforces each of these rules before anything is evaluated, except the last check of `self` dependencies, which runs once the merge has determined every contribution it may evaluate.
 
 | Rule | Violation |
 |---|---|
@@ -13,7 +13,7 @@ The checker enforces each of these rules before anything is evaluated, except th
 | Types cannot contain themselves. | [`E0410`](/reference/error-codes#e0410) |
 | Loops and comprehensions run only over collections that already exist. | not expressible |
 | Imports and part files cannot form a cycle. | [`E0703`](/reference/error-codes#e0703) |
-| Winning `self` dependencies of each block instance cannot form a cycle. | [`E0607`](/reference/error-codes#e0607) |
+| `self` dependencies of every contribution the merge may evaluate cannot form a cycle in the instance graph. | [`E0607`](/reference/error-codes#e0607) |
 
 ### No recursion
 
@@ -166,7 +166,9 @@ error[E0703]: imports and part files form a cycle
 
 ### Acyclic `self`
 
-An attribute computed from `self` is evaluated after the attributes it reads. Two attributes that read each other would leave both undefined. The checker reports a cycle within one body as the provisional warning [`W0607`](/reference/error-codes#w0607), without rejecting the program. Another entry or included part can override an edge with a constant and break the cycle. After merging, the evaluator checks only the winning contributions of every block instance, before resolving its late values. A cycle that survives is the error [`E0607`](/reference/error-codes#e0607). Dependencies from distinct instances are never combined. [Late-bound self](/guide/self) explains both checks.
+An attribute computed from `self` is evaluated after the attributes it reads. Two attributes that read each other would leave both undefined. The checker reports a cycle within one body as the provisional warning [`W0607`](/reference/error-codes#w0607), without rejecting the program. Another entry or included part can override an edge with a constant and break the cycle. After merging, the evaluator checks every contribution the merge may evaluate in each block instance, before resolving its late values. This includes lower whole values whose paths are not covered and declared defaults that may fill instances created by higher contributions. A cycle that survives is the error [`E0607`](/reference/error-codes#e0607). Dependencies from distinct instances are never combined. [Cycles](/guide/self#cycles) explains both checks.
+
+In a [struct value built by an expression](/guide/self#defaults-in-constructed-values), each omitted default runs at most once per construction, and reading a default that is still running stops with E0607.
 
 <!-- file: selfcycle.stav -->
 
@@ -238,7 +240,7 @@ Take any program that passes these checks. Because the call graph is acyclic, ev
 
 A lambda could only call itself if it received itself as an argument, and the type of such a parameter would have to contain itself. Types cannot, so no lambda can reach itself. The only repetition left is iteration, which runs a fixed number of times over collections that already exist. Each expression thus reaches a value in a finite number of steps.
 
-Statements add a finite amount of work each. A `for` runs once per element. Imports and includes unfold finitely, because their graphs are acyclic. Merging visits each contribution once. A winning `self` cycle stops evaluation with an error before its late values are resolved. Otherwise each deferred `self` value is evaluated once, in an order that exists because the winning graph is acyclic. The whole evaluation therefore ends.
+Statements add a finite amount of work each. A `for` runs once per element. Imports and includes unfold finitely, because their graphs are acyclic. Merging processes finitely many contributions. Before resolving late values, merging checks the dependencies of every contribution it may evaluate and rejects any cycle. Each participating deferred `self` value then runs at most once in that acyclic dependency order. Defaults of expression-built structs also terminate: each omitted field is computed at most once, and a read of a default that is still running stops with E0607. The whole evaluation therefore ends.
 
 ## Bounded iteration
 

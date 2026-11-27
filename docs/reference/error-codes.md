@@ -1755,7 +1755,7 @@ Give one of them a higher priority. A `force(...)` or `default(...)` resolves ev
 
 ### E0504
 
-A late whole value at a map, struct, payload sum or `Data` path may coexist only with strictly higher priority competing contributions at or below that path. An equal or lower priority competitor reports this error, citing both sources. This also applies to an `Option` of one of these types. The check excludes **all declared field defaults** at or under the path, and a `none` contribution at the option's own path. Declared defaults are fallbacks rather than rivals, and option presence decides `none` separately. The check examines static contributions before any deferred value runs. Values produced later cannot introduce this error.
+A late whole value at a map, struct, payload sum or `Data` path may coexist only with strictly higher priority competing contributions at or below that path. An equal or lower priority competitor reports this error, citing both sources. This also applies to an `Option` of one of these types. The check excludes **every declared default**, including parts of a default literal belonging to a field above the path, and a `none` contribution at the option's own path. Declared defaults are fallbacks rather than rivals, and option presence decides `none` separately. The check examines static contributions before any deferred value runs. Values produced later cannot introduce this error.
 
 For these types, two statement whole values at the same path report E0504 whatever their priorities. Each is a statement contribution that would need to precede the other. A declared whole default beside a statement whole value is accepted instead. For example, a declared late map default and a higher statement whole map both contribute, retaining the lower map's keys that the higher map lacks.
 
@@ -1832,7 +1832,7 @@ A whole struct need not run if higher contributions cover every field recursivel
 
 ## Evaluation
 
-These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. Recursion is rejected during checking. Winning `self` dependencies and potential declared-default fallbacks under late whole values are checked per block instance after merging, before resolving late values.
+These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. Recursion is rejected during checking. The `self` dependencies of every contribution the merge may evaluate are checked per block instance after merging, before resolving late values. This includes uncovered lower whole values and potential declared-default fallbacks.
 
 ### E0600
 
@@ -1940,7 +1940,7 @@ Use `get(ports, 2)`, which returns an `Option`, and give a fallback with `??`.
 
 ### E0605
 
-A map comprehension produces the same key twice. The same code is reported when evaluation finds duplicate interpolated keys within one map literal, whether its values are eager or late. The diagnostic points to the second key. Repeating a key across separate contributions is allowed and follows the normal merge rules.
+A map comprehension produces the same key twice, or one map literal contains duplicate computed keys, such as equal interpolated keys. The literal rule applies whether its values read `self` or not. The diagnostic points to the second key. Repeating a key across separate contributions is allowed and follows the normal merge rules.
 
 <!-- file: e0605.stav -->
 
@@ -2015,6 +2015,8 @@ Compute the condition from values that are known without merging, such as a `let
 ### E0607
 
 The `self` dependencies of one block instance form a cycle, so a value could depend on itself. This error is reported during evaluation after merging, before resolving late values. The graph contains the dependencies of every contribution the merge may evaluate, including lower whole values whose paths are not covered by higher contributions, and the edges of declared defaults that might fill higher-created instances under a late whole value. Outside every late whole value, declared defaults retain their edges whenever they may run, including ordinary winners and lower whole map defaults. Two ordinary defaults such as `a = self.b` and `b = self.a` therefore form a cycle without any statement contributions. These fallback edges are added at every depth, including through struct fields and struct-typed payload fields, whether or not the defaults end up used. This conservative check can reject a cycle involving an unused default, because the graph must be acyclic before the whole value runs. Direct struct fields that the whole always supplies do not take their defaults and add no fallback edges. Other losing contributions add no dependency, and different instances of the same struct have separate graphs. A body-local cycle produces only the provisional warning [W0607](#w0607) during checking because an overlay can still break it.
+
+Computed map keys in declared defaults are never evaluated by this check. Each such entry's value contributes its `self` edges at the map field, not a child path, whether or not a late whole value lies above it. A literal key can therefore accept a program that the computed-key approximation rejects. The [self guide](/guide/self#computed-keys-in-declared-defaults) shows an example.
 
 The same code also reports a cycle met while building a struct value by an expression, for example inside a list or a function body. A default reads that value's own fields, and reading a field whose default is still running stops evaluation with E0607 citing the struct. Given fields can break such a cycle, so these defaults are not rejected merely because their declaration is cyclic. Each omitted default is computed at most once per construction, and every field is complete before the value is returned. The [self guide](/guide/self#defaults-in-constructed-values) shows both outcomes.
 

@@ -1,6 +1,6 @@
 # Late-bound `self`
 
-Stav evaluates statements eagerly and in order, with one exception. `self` is the **final, merged value** of an enclosing block. A right-hand side that reads `self` is not evaluated where it is written. It is kept aside and evaluated during merging, once the attributes it reads have their final values.
+Stav evaluates statements eagerly and in order, except for values that read `self`. `self` is the **final, merged value** of an enclosing block. A right-hand side that reads `self` is not evaluated where it is written. It is kept aside and evaluated during merging, once the attributes it reads have their final values.
 
 That lets one attribute be derived from another, even when the other one is set or overridden somewhere else.
 
@@ -216,7 +216,7 @@ release = "testing"
 
 These positions decide which contributions exist, or they would let a function depend on where it is called. The restriction also applies through interpolations, function arguments and bindings that read `self`. Map-literal values may still read it. A struct-typed payload field still brings in that struct's field defaults, which may read `self`.
 
-A late whole map, struct, payload sum or `Data` value may have other contributions at or below its path only when they have strictly higher priority, including through an `Option`. [E0504](/reference/error-codes#e0504) checks this before any deferred value runs. It excludes all declared defaults at or below the path, and a `none` contribution at the option's own path. Struct and map literals split into children at statically typed paths instead. Literals assigned to `Data` stay whole. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
+A late whole map, struct, payload sum or `Data` value may have other contributions at or below its path only when they have strictly higher priority, including through an `Option`. [E0504](/reference/error-codes#e0504) checks this before any deferred value runs. It excludes every declared default, including parts of a default literal belonging to a field above the path, and a `none` contribution at the option's own path. Struct and map literals split into children at statically typed paths instead. Literals assigned to `Data` stay whole. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
 
 Higher contributions win at their own paths. The whole supplies the remaining fields, map keys and matching variant payloads. Declared defaults fill only instances that higher contributions create and no whole value supplies, such as a missing map entry, an option value where the whole returns `none`, or a selected payload of another variant. This applies at every depth, including inside a whole struct. A late whole struct need not run if higher contributions cover every field recursively. A late whole map always runs, because it might supply omitted keys. For a sum with a payload variant, a tagged-block selection also leaves the whole eligible to run: a matching payload survives, while a different variant is discarded. A higher whole attribute contribution of a sum replaces it instead. [Merging rules](/reference/merging#late-whole-values) gives examples and the full coverage rules.
 
@@ -421,11 +421,52 @@ error[E0607]: `self` dependencies form a cycle
 
 A higher constant contribution to either field removes its losing default and breaks the cycle.
 
+### Computed keys in declared defaults
+
+The final dependency check never evaluates a map key in a declared default. A literal key gives the check a known child path. An entry whose key is not a string literal instead belongs to the map field: all `self` reads in that entry's value start at the map node, and the check creates no child node for that entry. This applies both with and without an enclosing late whole value.
+
+This conservative graph can reject a program that would pass with a literal key:
+
+<!-- file: computed-default-cycle.stav -->
+
+```stav
+struct S { a: Int, b: Int = self.a }
+
+fn key() -> Str = "x"
+
+struct Box {
+  n: Int = self.m["x"].b
+  m: Map<Str, S> = { "#{key()}" = { a = self.n } }
+}
+
+struct Root { box: Box }
+
+box.m.x.a = force(2)
+```
+
+<!-- run: eval computed-default-cycle.stav -->
+
+```text
+error[E0607]: `self` dependencies form a cycle
+  ┌─ computed-default-cycle.stav:6:12
+  │
+6 │   n: Int = self.m["x"].b
+  │            ^^^^^^^^^^^^^
+  │            │
+  │            `box.n` reads `box.m`
+7 │   m: Map<Str, S> = { "#{key()}" = { a = self.n } }
+  │                    ------------------------------- `box.m` reads `box.n`
+  │
+  = note: cycle: box.n -> box.m -> box.n
+```
+
+The graph has both `box.n -> box.m` and `box.m -> box.n`, even though `box.m.x.a` is forced. Writing the key as the literal `x` removes the covered child's dependency and accepts the program with `box.n = 2`. To retain a computed key without this approximation, contribute the entry with a statement instead. A losing default never evaluates its key, so even a key such as `"#{1 / 0}"` cannot fail when the default is unused.
+
 ## How it fits with eager evaluation
 
-Late binding is narrow on purpose. Everything that decides the shape of the value, such as conditions, loops, labels and includes, is evaluated eagerly and cannot read `self`. So the set of contributions is fixed before merging, and only the values of some attributes wait for it. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Potential declared-default fallbacks below late whole values are included in that graph before their use is known. Evaluation still always terminates.
+Late binding is narrow on purpose. Statement conditions, loop collections, labels and includes are evaluated eagerly and cannot read `self`. Declared defaults, including their computed map keys, wait until they participate. The dependency check never evaluates those keys and conservatively records their entries at the map field instead. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Potential declared-default fallbacks below late whole values are included in that graph before their use is known. Evaluation still always terminates.
 
-Priorities are decided before deferred values run. A losing deferred value is not evaluated. Struct and map literals split recursively into contributions for each field or key, so only the winning late children run. Eager children still run when the literal is collected, even if another child reads `self`.
+Priorities are decided before deferred values run. A losing deferred value is not evaluated. Every declared field or payload default also waits until it fills a field, whether or not it reads `self`, and runs at most once per field it fills. A losing declared default never runs. [Declared defaults](/reference/merging#declared-defaults) shows examples without `self`. Struct and map literals split recursively into contributions for each field or key, so only the winning late children run. In statement literals, eager children still run when the literal is collected, even if another child reads `self`. Children of declared default literals wait until they participate.
 
 <!-- file: deferred-winners.stav -->
 

@@ -23,7 +23,35 @@ Every statement form produces contributions:
 
 Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. Map-literal keys cannot read `self` either, including through interpolation, function arguments or late bindings. Map-literal values may read it. These restrictions keep contribution paths independent of merged values. [Expressions and statements](/reference/expressions) describes each statement in full.
 
-A late whole value at a map, struct, payload sum or `Data` path, including an `Option` of one of these types, permits other contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. Two kinds of contributions are excluded from this check: **all declared field defaults** at or under the path, and a `none` contribution at the `Option` path itself. Declared defaults are fallbacks, and option presence is decided separately. For these types, two statement whole values at the same path are E0504 regardless of their priorities: each is a statement contribution that must precede the other. A declared whole default beside a statement whole value is allowed instead. This validation runs before any deferred value is evaluated and never considers its output.
+A late whole value at a map, struct, payload sum or `Data` path, including an `Option` of one of these types, permits other contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. Two kinds of contributions are excluded from this check: **every declared default**, including parts of a default literal belonging to a field above the path, and a `none` contribution at the `Option` path itself. Declared defaults are fallbacks, and option presence is decided separately. For these types, two statement whole values at the same path are E0504 regardless of their priorities: each is a statement contribution that must precede the other. A declared whole default beside a statement whole value is allowed instead. This validation runs before any deferred value is evaluated and never considers its output.
+
+An enclosing default literal can therefore supply missing keys below a late whole map:
+
+<!-- file: enclosing-default-map.stav -->
+
+```stav
+struct S { m: Map<Str, Int> }
+struct Root { x: Int = 0, s: S = { m = { a = 1 } } }
+
+fn mk(x: Int) -> Map<Str, Int> = {}
+
+s.m = mk(self.x)
+```
+
+<!-- run: eval enclosing-default-map.stav -->
+
+```json
+{
+  "x": 0,
+  "s": {
+    "m": {
+      "a": 1
+    }
+  }
+}
+```
+
+The declared `a = 1` belongs to the default of `s`, above the whole value's path `s.m`, and is still exempt from E0504. It fills the missing key. If `mk` returns `{ a = 2 }` instead, that higher whole value supplies `a = 2`.
 
 A nullary sum, whose variants have no payload, is a scalar and is never subject to E0504, including inside an `Option`. A sum with even one payload variant remains subject to the rule, including when the contribution produces a nullary variant.
 
@@ -120,6 +148,38 @@ settings = { a = 3, b = 4 }
   }
 }
 ```
+
+## Declared defaults
+
+Every declared struct or payload field default is evaluated only when it fills a field, and at most once per field it fills. This applies even without `self` and outside late whole values. A losing default never runs, so it cannot fail:
+
+<!-- file: declared-losers.stav -->
+
+```stav
+struct S { x: Int = 1 / 0, y: Int = 0 }
+struct Root { x: Int = 1 / 0, m: Map<Str, S> = {} }
+
+x     = 7
+m.b.x = 7
+```
+
+<!-- run: eval declared-losers.stav -->
+
+```json
+{
+  "x": 7,
+  "m": {
+    "b": {
+      "x": 7,
+      "y": 0
+    }
+  }
+}
+```
+
+Defaults without `self` reuse their first result across instances within one evaluation. Defaults that read `self` use the fields of their own instance. A literal default splits recursively into field and literal-key contributions, so a covered child can remain unevaluated while a sibling still fills its field. Computed map keys remain unknown during cycle checking and are evaluated only when their default participates. The reads in each computed-key entry's value belong to the map field itself, not to a child path. [Computed keys and cycles](/guide/self#computed-keys-in-declared-defaults) explains the conservative graph this produces. Other expressions remain whole: when a constructor default participates, its arguments are evaluated normally.
+
+An attribute statement such as `x = default(1 / 0)` is not a declared default. It still runs eagerly and fails even when a later `x = 7` wins. The [`self` guide](/guide/self#how-it-fits-with-eager-evaluation) contrasts eager statements with deferred values.
 
 ## How each type merges
 
@@ -242,7 +302,7 @@ The declared default `["declared"]` of `tags` is not part of the result, because
 
 ### Structs, maps and literals
 
-Structs merge field by field and maps merge key by key. A struct or map literal on the right side of an attribute contributes each field or key it sets, at the priority of the statement. This splitting is recursive, including when a literal reads `self` or appears in a declared field default. Each child records only its own reads. Only winning deferred children run, while eager children run before merging. A lower priority literal can therefore lose one child and still supply its siblings. Fields it leaves out contribute nothing. That is why a literal, an attribute path and a block can all add to the same value:
+Structs merge field by field and maps merge key by key. A struct or map literal on the right side of an attribute contributes each field or key it sets, at the priority of the statement. This splitting is recursive, including when a literal reads `self` or appears in a declared field default. Each statically known child records only its own reads. In declared defaults, a computed-key entry instead records its value's reads at the map field until its key is evaluated at runtime. Only participating children of a declared default run. In a statement literal, only winning deferred children run, while eager children run before merging. A lower priority literal can therefore lose one child and still supply its siblings. Fields it leaves out contribute nothing. That is why a literal, an attribute path and a block can all add to the same value:
 
 <!-- file: literals.stav -->
 
