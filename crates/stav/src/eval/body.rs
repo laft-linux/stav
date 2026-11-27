@@ -547,7 +547,7 @@ impl<'c> Eval<'c> {
                     let name = self.key_text(cx, key)?;
                     if !keys.insert(name.clone()) {
                         return Err(self.fail(
-                            cx.at(map.syntax().span()),
+                            cx.at(key.span()),
                             "E0605",
                             format!("the key `{name}` is given more than once"),
                         ));

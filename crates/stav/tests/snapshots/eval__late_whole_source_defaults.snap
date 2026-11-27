@@ -1,0 +1,24 @@
+---
+source: crates/stav/tests/eval.rs
+assertion_line: 225
+expression: output
+---
+--- JSON
+{
+  "pkgs": {
+    "complete": {
+      "version": "broken",
+      "source": {
+        "url": "mirror",
+        "sha256": "abc"
+      }
+    },
+    "partial": {
+      "version": "1",
+      "source": {
+        "url": "u/1",
+        "sha256": "abc"
+      }
+    }
+  }
+}

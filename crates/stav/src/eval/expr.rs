@@ -563,7 +563,8 @@ impl<'c> Eval<'c> {
             };
             let text = self.key_text(cx, key)?;
             let name = parts.is_some().then(|| text.clone());
-            let key = self.map_key(key_sum, text, cx.at(key.span()))?;
+            let key_at = cx.at(key.span());
+            let key = self.map_key(key_sum, text, key_at)?;
             let value = match (parts.as_deref_mut(), name) {
                 (Some(parts), Some(name)) => {
                     let (value, inner) = self.written(cx, value)?;
@@ -580,7 +581,7 @@ impl<'c> Eval<'c> {
                 }
                 Entry::Occupied(slot) => {
                     return Err(self.fail(
-                        at,
+                        key_at,
                         "E0605",
                         format!(
                             "the key `{}` is given more than once",

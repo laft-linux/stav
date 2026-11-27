@@ -23,7 +23,9 @@ Every statement form produces contributions:
 
 Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. Map-literal keys cannot read `self` either, including through interpolation, function arguments or late bindings. Map-literal values may read it. These restrictions keep contribution paths independent of merged values. [Expressions and statements](/reference/expressions) describes each statement in full.
 
-A late right-hand side that is not a literal contributes one whole value. At a map, struct or `Data` path, including an `Option` of these types, no other contribution at or below that path may have equal or higher priority. Violations report [E0504](/reference/error-codes#e0504) and cite both contributions. Lower priority competitors are allowed. The whole struct value's own generated field defaults do not count as other contributions. Literals are exempt from this whole-value restriction.
+A late whole value at a map, struct or `Data` path, including through `Option`, permits other static contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. This validation runs before any deferred value is evaluated and never considers the output of deferred evaluation. Higher contributions win at their own paths regardless of the whole's keys, and the whole wins everywhere else under its path. A whole that higher contributions fully replace is never evaluated and adds no dependencies.
+
+Declared defaults have the lowest priority, so explicit overrides of a late whole field default are accepted. A partial literal preserves unmentioned keys and fields. Overriding every field of a struct makes its whole default unnecessary. Its own generated field defaults are not independent competing contributions. Struct and map literals at statically typed paths split into child contributions. A literal assigned to `Data` remains a whole value, so its syntax does not exempt it from the rule.
 
 ## Priorities
 

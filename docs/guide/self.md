@@ -155,7 +155,9 @@ release = "testing"
 
 These decide which contributions exist, or they would let a function depend on where it is called. The restriction also applies through interpolations, function arguments and bindings that read `self`. Map-literal values may still read it.
 
-A late expression that returns a whole map, struct or `Data` value, rather than a literal, has an additional restriction. No other contribution at or below its path may have equal or higher priority, even through an `Option`. Lower priority contributions and its own generated field defaults are allowed. [E0504](/reference/error-codes#e0504) explains the diagnostic.
+A late whole map, struct or `Data` value may have other contributions at or below its path only when they have strictly higher priority, even through an `Option`. Higher contributions win at their own paths, and the whole supplies everything else. It is never evaluated if higher contributions fully replace it. A declared field default has the lowest priority, so explicit overrides of a late whole default are accepted. A partial literal preserves unmentioned fields or keys. Overriding all fields of a struct makes its whole default unnecessary.
+
+The rule is checked over static contributions before any deferred value runs. Equal or lower priority competitors report [E0504](/reference/error-codes#e0504). Struct and map literals split into children at statically typed paths. Literals assigned to `Data` stay whole and follow the whole-value rule. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
 
 Using `self` in a structural position is an error:
 
@@ -203,7 +205,7 @@ tag     = "v#{self.version}"
 <!-- run: check cycle.stav -->
 
 ```text
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
   ┌─ cycle.stav:6:11
   │
 6 │ version = "#{self.tag}"
@@ -222,7 +224,7 @@ If both edges win the merge, evaluation fails with `E0607`. This authoritative c
 <!-- run: eval cycle.stav -->
 
 ```text
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
   ┌─ cycle.stav:6:11
   │
 6 │ version = "#{self.tag}"
@@ -277,7 +279,7 @@ tag = force("v1.0")
   "version": "v1.0",
   "tag": "v1.0"
 }
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
   ┌─ cycle-forced.stav:6:11
   │
 6 │ version = "#{self.tag}"
@@ -392,7 +394,6 @@ error[E0603]: division by zero
   │
 6 │ cfg   = default({ a = 1 / 0, b = self.zero })
   │                         ^
-
 ```
 
 ## Next

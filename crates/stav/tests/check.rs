@@ -711,7 +711,62 @@ fn map_literal_keys_cannot_read_self_through_expressions_or_bindings() {
              m = {{ \"#{{{key}}}\" = 1 }}\n"
         );
         let fixture = fixture(&text);
-        assert_eq!(codes(&fixture.host, &fixture.root), ["E0606"], "{text}");
+        let diagnostics =
+            check(&fixture.host, &fixture.root).expect_err("map literal keys cannot read self");
+        let errors: Vec<_> = diagnostics.iter().collect();
+        assert_eq!(errors.len(), 1, "{text}:\n{diagnostics}");
+        assert_eq!(errors[0].diagnostic.code, "E0606", "{text}");
+        assert_eq!(
+            errors[0].diagnostic.help.as_deref(),
+            Some("compute the key without `self`"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn body_late_bindings_in_map_keys_have_actionable_help() {
+    let fixture = fixture(
+        "struct Item { key: Str = \"a\", m: Map<Str, Int> = {} }\n\
+         struct Root { items: Map<Str, Item> = {} block item }\n\
+         item one {\n\
+           let late = self.key\n\
+           m = { \"#{late}\" = 1 }\n\
+         }\n",
+    );
+    let diagnostics =
+        check(&fixture.host, &fixture.root).expect_err("a late binding cannot supply a map key");
+    let errors: Vec<_> = diagnostics.iter().collect();
+    assert_eq!(errors.len(), 1, "{diagnostics}");
+    assert_eq!(errors[0].diagnostic.code, "E0606");
+    assert_eq!(
+        errors[0].diagnostic.help.as_deref(),
+        Some("compute the key without `self`")
+    );
+}
+
+#[test]
+fn map_keys_cannot_read_self_inside_lists_arguments_or_data() {
+    for (ty, expression) in [
+        ("List<Map<Str, Int>>", "[{ \"#{self.key}\" = 1 }]"),
+        ("Map<Str, Int>", "identity({ \"#{self.key}\" = 1 })"),
+        ("Data", "{ \"#{self.key}\" = 1 }"),
+    ] {
+        let text = format!(
+            "struct Root {{ key: Str = \"a\", value: {ty} }}\n\
+             fn identity(m: Map<Str, Int>) -> Map<Str, Int> = m\n\
+             value = {expression}\n"
+        );
+        let fixture = fixture(&text);
+        let diagnostics = check(&fixture.host, &fixture.root)
+            .expect_err("every map literal key must be independent of self");
+        let errors: Vec<_> = diagnostics.iter().collect();
+        assert_eq!(errors.len(), 1, "{text}:\n{diagnostics}");
+        assert_eq!(errors[0].diagnostic.code, "E0606");
+        assert_eq!(
+            errors[0].diagnostic.help.as_deref(),
+            Some("compute the key without `self`")
+        );
     }
 }
 
@@ -772,19 +827,55 @@ fn block_names_are_unique_per_struct() {
 }
 
 #[test]
-fn invalid_block_field_types_keep_their_code() {
-    let fixture = fixture("struct Root { count: Int = 0 block counter }\n");
-    let Err(diagnostics) = check(&fixture.host, &fixture.root) else {
-        panic!("a block clause on an integer must fail");
-    };
-    let errors: Vec<_> = diagnostics.iter().collect();
-    assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].diagnostic.code, "E0443");
-    assert!(
-        errors[0]
-            .diagnostic
-            .message
-            .contains("map of structs or a sum type")
+fn invalid_block_field_types_report_their_own_code() {
+    for (ty, value) in [("Int", "0"), ("List<Int>", "[]"), ("Map<Str, Str>", "{}")] {
+        let text = format!("struct Root {{ value: {ty} = {value} block item }}\n");
+        let fixture = fixture(&text);
+        let diagnostics = check(&fixture.host, &fixture.root)
+            .expect_err("a block clause needs a supported field type");
+        let errors: Vec<_> = diagnostics.iter().collect();
+        assert_eq!(errors.len(), 1, "{diagnostics}");
+        assert_eq!(errors[0].diagnostic.code, "E0447", "{ty}");
+        assert_eq!(
+            errors[0].diagnostic.message,
+            format!(
+                "a `block` clause needs a map of structs, a sum or an optional sum, not `{ty}`"
+            )
+        );
+        assert_eq!(
+            errors[0].diagnostic.help.as_deref(),
+            Some("declare the field as a map of structs, a sum or an optional sum")
+        );
+    }
+}
+
+#[test]
+fn block_clauses_accept_maps_of_structs_sums_and_optional_sums() {
+    let text = "struct Item { value: Int = 0 }\n\
+                type Choice = one | two\n\
+                struct Root {\n\
+                  items: Map<Str, Item> = {} block item\n\
+                  choice: Choice = one block choose\n\
+                  optional: Option<Choice> = none block maybe\n\
+                }\n";
+    assert!(!run(text).starts_with("--- errors"), "{}", run(text));
+}
+
+#[test]
+fn provisional_self_cycle_warning_explains_overrides() {
+    let fixture = fixture(
+        "struct Root { a: Int, b: Int }\n\
+         a = self.b\n\
+         b = self.a\n",
+    );
+    let checked =
+        check(&fixture.host, &fixture.root).expect("a body cycle is provisional until merging");
+    let warnings: Vec<_> = checked.warnings().iter().collect();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].diagnostic.code, "W0607");
+    assert_eq!(
+        warnings[0].diagnostic.message,
+        "`self` dependencies form a cycle unless something overrides them"
     );
 }
 

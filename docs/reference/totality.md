@@ -187,7 +187,7 @@ package codec {
 <!-- run: check selfcycle.stav -->
 
 ```text
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
    ┌─ selfcycle.stav:9:13
    │
  9 │   version = "#{self.tag}"
@@ -206,7 +206,7 @@ Checking succeeds with that warning. Without an override, both edges win and eva
 <!-- run: eval selfcycle.stav -->
 
 ```text
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
    ┌─ selfcycle.stav:9:13
    │
  9 │   version = "#{self.tag}"

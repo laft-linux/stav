@@ -4,8 +4,8 @@ assertion_line: 225
 expression: output
 ---
 --- errors
-error[E0504]: a late whole value for `m` has other contributions at equal or higher priority
+error[E0504]: a late whole value for `m` has other contributions at equal or lower priority
   --> app/main.stav:3:5
   label: app/main.stav:3:5: a value that reads `self` (plain)
-  label: app/overlay.stav:1:13: 2 (force), included from app/main.stav:4:1
-  help: remove the other contributions, lower their priority, or compute the whole value without `self`
+  label: app/overlay.stav:1:15: 2 (default), included from app/main.stav:4:1
+  help: remove the other contributions, raise their priority, or compute the whole value without `self`

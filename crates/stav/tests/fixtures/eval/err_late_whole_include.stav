@@ -1,7 +1,7 @@
 #- file main.stav
-struct Root { n: Int = 1, m: Map<Str, Int> = {} }
+struct Root { n: Int = 1, m: Map<Str, Int> }
 fn make(n: Int) -> Map<Str, Int> = { a = n }
 m = make(self.n)
 include "./overlay.stav"
 #- file overlay.stav
-m.b = force(2)
+m.b = default(2)

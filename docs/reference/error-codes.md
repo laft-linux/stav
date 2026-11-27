@@ -77,18 +77,19 @@ The first digits of a code name the area it belongs to.
 | [E0440](#e0440) | an unknown block kind |
 | [E0441](#e0441) | `default` or `force` inside an expression |
 | [E0442](#e0442) | a part included into a body of another struct |
-| [E0443](#e0443) | an invalid `block` clause or a block name shared by fields |
+| [E0443](#e0443) | a block name shared by fields |
 | [E0444](#e0444) | wrong arguments in a call or a type |
+| [E0447](#e0447) | a `block` clause on a field of the wrong type |
 | [E0501](#e0501) | conflicting values at equal priority |
 | [E0502](#e0502) | tagged blocks that select different variants |
 | [E0503](#e0503) | `Data` values of different shapes at equal priority |
-| [E0504](#e0504) | a late whole value with other contributions at equal or higher priority |
+| [E0504](#e0504) | a late whole value with other contributions at equal or lower priority |
 | [E0600](#e0600) | an internal error |
 | [E0601](#e0601) | integer overflow |
 | [E0602](#e0602) | a float that is not finite |
 | [E0603](#e0603) | division by zero |
 | [E0604](#e0604) | an index out of range, a missing key or an unknown variant |
-| [E0605](#e0605) | a duplicate key produced by a comprehension |
+| [E0605](#e0605) | a duplicate computed key in a map literal or comprehension |
 | [E0606](#e0606) | `self` where it cannot be used |
 | [E0607](#e0607) | a cycle of winning `self` dependencies in a block instance |
 | [E0608](#e0608) | `fail(...)` was called |
@@ -893,7 +894,7 @@ Move the binding that is used before the one that uses it.
 
 ### E0306
 
-A name is declared twice in one place: two declarations with the same name in a file, two fields or two parameters with the same name, two `block` clauses with the same kind in one struct, the same key twice in a map or struct literal, or the same field twice in a variant pattern.
+A name is declared twice in one place: two declarations with the same name in a file, two fields or two parameters with the same name, the same key twice in a map or struct literal, or the same field twice in a variant pattern.
 
 <!-- file: e0306.stav -->
 
@@ -1517,27 +1518,7 @@ Include the part into a body of its own struct, or change its type.
 
 ### E0443
 
-A field has a `block` clause, but its type is neither a map of structs nor a sum type, or its block alias conflicts with another field's alias or name in the same struct. Field names and block aliases share one namespace, regardless of declaration order or field type. An alias may equal its own field's name, and distinct structs may reuse aliases.
-
-<!-- file: e0443.stav -->
-
-```stav
-struct Root { count: Int = 0 block counter }
-```
-
-<!-- run: check e0443.stav -->
-
-```text
-error[E0443]: a `block` clause needs a map of structs or a sum type, not `Int`
-  ┌─ e0443.stav:1:15
-  │
-1 │ struct Root { count: Int = 0 block counter }
-  │               ^^^^^
-  │
-  = help: declare the field as `Map<Str, T>` with a struct `T`
-```
-
-Give the field a type such as `Map<Str, Counter>`, or remove the clause.
+A block alias conflicts with another field's alias or name in the same struct. Field names and block aliases share one namespace, regardless of declaration order or field type. An alias may equal its own field's name, and distinct structs may reuse aliases.
 
 Two fields cannot use the same block alias:
 
@@ -1594,6 +1575,30 @@ error[E0444]: `add` is missing the argument `y`
 ```
 
 Pass the arguments the function or type expects.
+
+### E0447
+
+A `block` clause is allowed on a map of structs, a sum type or an `Option` of a sum type. Other field types cannot receive block bodies.
+
+<!-- file: e0447.stav -->
+
+```stav
+struct Root { count: Int = 0 block counter }
+```
+
+<!-- run: check e0447.stav -->
+
+```text
+error[E0447]: a `block` clause needs a map of structs, a sum or an optional sum, not `Int`
+  ┌─ e0447.stav:1:15
+  │
+1 │ struct Root { count: Int = 0 block counter }
+  │               ^^^^^
+  │
+  = help: declare the field as a map of structs, a sum or an optional sum
+```
+
+Give the field a type such as `Map<Str, Counter>`, or remove the clause.
 
 ## Merging
 
@@ -1696,12 +1701,14 @@ Give one of them a higher priority. A `force(...)` or `default(...)` resolves ev
 
 ### E0504
 
-A right-hand side that reads `self` and is not a literal contributes one whole value. At a map, struct or `Data` path, including an `Option` of one of these types, it cannot have another contribution at or below that path with equal or higher priority. This restriction keeps the paths that participate in merging independent of merged values. The diagnostic cites the late whole value and its competitors, including contributions from other entry files and included parts.
+A late whole value at a map, struct or `Data` path may coexist only with strictly higher priority contributions at or below that path. An equal or lower priority contribution reports this error, citing both sources. This also applies through `Option`. The check examines static statement and declaration contributions before any deferred value runs. Values produced later cannot introduce this error.
+
+Struct and map literals at statically typed struct or map paths split into per-field or per-key contributions instead. A literal assigned to `Data` remains one whole value, so the same restriction applies when it reads `self`.
 
 <!-- file: e0504.stav -->
 
 ```stav
-struct Root { version: Int = 1, settings: Map<Str, Int> = {} }
+struct Root { version: Int = 1, settings: Map<Str, Int> }
 
 fn settings_for(version: Int) -> Map<Str, Int> = { version = version }
 
@@ -1712,7 +1719,7 @@ settings.extra = 2
 <!-- run: eval e0504.stav -->
 
 ```text
-error[E0504]: a late whole value for `settings` has other contributions at equal or higher priority
+error[E0504]: a late whole value for `settings` has other contributions at equal or lower priority
   ┌─ e0504.stav:5:18
   │
 5 │ settings       = settings_for(self.version)
@@ -1722,10 +1729,12 @@ error[E0504]: a late whole value for `settings` has other contributions at equal
 6 │ settings.extra = 2
   │                  - 2 (plain)
   │
-  = help: remove the other contributions, lower their priority, or compute the whole value without `self`
+  = help: remove the other contributions, raise their priority, or compute the whole value without `self`
 ```
 
-Remove the competing contributions, give them a lower priority, or compute the whole value without `self`. Lower priority contributions are allowed. The defaults generated for the whole struct value's own fields are not competitors. Literals are exempt from this whole-value restriction, but their map keys still cannot read `self`, as explained under [E0606](#e0606).
+Remove the competing contributions, give them strictly higher priority, or compute the whole value without `self`. A higher contribution wins at its own path regardless of the keys the whole produces. The whole supplies the remaining paths. If higher contributions fully replace it, it is never evaluated and contributes no dependency edges.
+
+A declared field default has the lowest priority, so explicit overrides of a late whole default are accepted. A partial struct or map literal still preserves unmentioned fields or keys. Overriding every field of a struct makes its whole default unnecessary. The defaults generated for that whole struct's own fields are not independent competitors. Map keys still cannot read `self`, as explained under [E0606](#e0606).
 
 ## Evaluation
 
@@ -1837,7 +1846,7 @@ Use `get(ports, 2)`, which returns an `Option`, and give a fallback with `??`.
 
 ### E0605
 
-A map comprehension produces the same key twice. The same code is reported for duplicate keys in a map literal that only evaluation can detect.
+A map comprehension produces the same key twice. The same code is reported when evaluation finds duplicate interpolated keys within one map literal, whether its values are eager or late. The diagnostic points to the second key. Repeating a key across separate contributions is allowed and follows the normal merge rules.
 
 <!-- file: e0605.stav -->
 
@@ -1861,9 +1870,29 @@ error[E0605]: the comprehension produces the key `web` more than once
 
 Make the keys unique, for example with `unique(names)`.
 
+An interpolated key can collide with a later key in the same literal:
+
+<!-- file: e0605-literal.stav -->
+
+```stav
+struct Root { n: Int = 1, values: Map<Str, Int> }
+let key = "a"
+values = { "#{key}" = self.n, a = self.n }
+```
+
+<!-- run: eval e0605-literal.stav -->
+
+```text
+error[E0605]: the key `a` is given more than once
+  ┌─ e0605-literal.stav:3:31
+  │
+3 │ values = { "#{key}" = self.n, a = self.n }
+  │                               ^
+```
+
 ### E0606
 
-`self` is read where it cannot be used. `self` is resolved after merging, so it cannot decide which contributions exist. It is not allowed in the condition of `if`, the collection of `for`, block labels, map-literal keys, `include` expressions, function bodies and lambdas. This includes a read inside a key's interpolation, a function argument, or an expression-local `let`. A binding that reads `self` cannot be used there either, and cannot be used from the body of another block. Map-literal values may read `self`.
+`self` is read where it cannot be used. `self` is resolved after merging, so it cannot decide which contributions exist. It is not allowed in the condition of `if`, the collection of `for`, block labels, map-literal keys, `include` expressions, function bodies and lambdas. This includes a read inside a key's interpolation, a function argument, or an expression-local `let`. A binding that reads `self` cannot be used there either, and cannot be used from the body of another block. Map-literal values may read `self`. This rule applies to every map literal key, including literals inside lists, function arguments and `Data` values. Compute keys without `self`.
 
 <!-- file: e0606.stav -->
 
@@ -1912,7 +1941,7 @@ package {
 <!-- run: eval e0607.stav -->
 
 ```text
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
    ┌─ e0607.stav:9:13
    │
  9 │   version = "#{self.tag}"
@@ -2468,7 +2497,7 @@ tag     = "v#{self.version}"
 <!-- run: check w0607.stav -->
 
 ```text
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
   ┌─ w0607.stav:6:11
   │
 6 │ version = "#{self.tag}"

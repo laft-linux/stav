@@ -1366,14 +1366,14 @@ impl<'p> Checker<'p> {
                     errors.push((
                         s.file,
                         Diagnostic::error(
-                            "E0443",
+                            "E0447",
                             field.span,
                             format!(
-                                "a `block` clause needs a map of structs or a sum type, not `{}`",
+                                "a `block` clause needs a map of structs, a sum or an optional sum, not `{}`",
                                 self.types.render(field.ty)
                             ),
                         )
-                        .with_help("declare the field as `Map<Str, T>` with a struct `T`"),
+                        .with_help("declare the field as a map of structs, a sum or an optional sum"),
                     ));
                 }
             }

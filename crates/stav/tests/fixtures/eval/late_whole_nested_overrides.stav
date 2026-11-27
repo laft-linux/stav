@@ -1,0 +1,8 @@
+struct Root { n: Int = 1, k: Int = 2, m: Map<Str, Map<Str, Int>> }
+fn outer(n: Int) -> Map<Str, Map<Str, Int>> = {
+  x = { a = n }
+  y = { c = n }
+}
+fn inner(k: Int) -> Map<Str, Int> = { b = k }
+m = default(outer(self.n))
+m.x = inner(self.k)

@@ -1,0 +1,18 @@
+---
+source: crates/stav/tests/eval.rs
+assertion_line: 225
+expression: output
+---
+--- JSON
+{
+  "n": 1,
+  "k": 2,
+  "m": {
+    "x": {
+      "b": 2
+    },
+    "y": {
+      "c": 1
+    }
+  }
+}

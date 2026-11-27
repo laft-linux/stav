@@ -1,0 +1,16 @@
+struct Source { url: Str, sha256: Str = "" }
+fn hosted(v: Str) -> Source = if v == "broken" {
+  Source { url = "#{1 / 0}" }
+} else {
+  Source { url = "u/#{v}" }
+}
+struct Pkg { version: Str, source: Source = hosted(self.version) }
+struct Root { pkgs: Map<Str, Pkg> = {} block pkg }
+pkg partial {
+  version = "1"
+  source.sha256 = "abc"
+}
+pkg complete {
+  version = "broken"
+  source = force({ url = "mirror", sha256 = "abc" })
+}

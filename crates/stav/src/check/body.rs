@@ -454,7 +454,7 @@ impl<'p> Checker<'p> {
                     None => Diagnostic::warning(
                         "W0607",
                         span,
-                        "`self` dependencies may form a cycle unless merging overrides an edge",
+                        "`self` dependencies form a cycle unless something overrides them",
                     )
                     .with_label(None, span, message)
                     .with_help("set one of the attributes without `self` at a higher priority"),

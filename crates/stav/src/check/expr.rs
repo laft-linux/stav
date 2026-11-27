@@ -644,14 +644,15 @@ impl<'p> Checker<'p> {
             SelfMode::Default(_) if top.is_none() => cx.reads.extend_from_slice(reads),
             SelfMode::Forbidden(place) => {
                 let place = *place;
-                self.error(
-                    cx.file,
-                    Diagnostic::error(
-                        "E0606",
-                        span,
-                        format!("`{name}` reads `self`, which cannot be used in {place}"),
-                    ),
+                let mut diagnostic = Diagnostic::error(
+                    "E0606",
+                    span,
+                    format!("`{name}` reads `self`, which cannot be used in {place}"),
                 );
+                if place == "a map literal key" {
+                    diagnostic = diagnostic.with_help("compute the key without `self`");
+                }
+                self.error(cx.file, diagnostic);
             }
             _ => self.error(
                 cx.file,
@@ -1447,10 +1448,15 @@ impl<'p> Checker<'p> {
         let found = match &cx.self_mode {
             SelfMode::Forbidden(place) => {
                 let place = *place;
+                let help = if place == "a map literal key" {
+                    "compute the key without `self`"
+                } else {
+                    "pass the value as a parameter instead"
+                };
                 self.error(
                     cx.file,
                     Diagnostic::error("E0606", span, format!("`self` cannot be used in {place}"))
-                        .with_help("pass the value as a parameter instead"),
+                        .with_help(help),
                 );
                 return (TypeId::ERROR, Meaning::Plain);
             }

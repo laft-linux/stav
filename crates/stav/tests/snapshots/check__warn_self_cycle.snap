@@ -15,13 +15,13 @@ unit 0 app/main.stav
   12:3   let v: Str late(Package.url@1)
   13:3   url: Str (plain) late(Package.url@1)
 --- warnings
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
   --> app/main.stav:8:13
   label: app/main.stav:8:13: `Package.version` reads `Package.tag`
   label: app/main.stav:9:9: `Package.tag` reads `Package.version`
   note: cycle: Package.version -> Package.tag -> Package.version
   help: set one of the attributes without `self` at a higher priority
-warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+warning[W0607]: `self` dependencies form a cycle unless something overrides them
   --> app/main.stav:13:9
   label: app/main.stav:13:9: `Package.url` reads `Package.url`
   note: cycle: Package.url -> Package.url

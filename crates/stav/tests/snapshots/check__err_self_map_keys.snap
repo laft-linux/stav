@@ -6,11 +6,13 @@ expression: output
 --- errors
 error[E0606]: `self` cannot be used in a map literal key
   --> app/main.stav:4:10
-  help: pass the value as a parameter instead
+  help: compute the key without `self`
 error[E0606]: `self` cannot be used in a map literal key
   --> app/main.stav:5:26
-  help: pass the value as a parameter instead
+  help: compute the key without `self`
 error[E0606]: `late` reads `self`, which cannot be used in a map literal key
   --> app/main.stav:6:10
+  help: compute the key without `self`
 error[E0606]: `k` reads `self`, which cannot be used in a map literal key
   --> app/main.stav:7:30
+  help: compute the key without `self`

@@ -1068,108 +1068,111 @@ mod random {
 }
 
 #[test]
-fn late_whole_values_reject_equal_or_higher_priority_competitors() {
-    let cases = [
-        ("Map<Str, Int>", "{ a = n }", "m.a = 2"),
-        ("Item", "Item { a = n }", "m.a = 2"),
-        ("Data", "{ a = n }", "m = { b = 2 }"),
-        ("Option<Map<Str, Int>>", "{ a = n }", "m.a = 2"),
-        ("Option<Item>", "Item { a = n }", "m.a = 2"),
-        ("Option<Data>", "{ a = n }", "m = { b = 2 }"),
-    ];
-    for (ty, value, competitor) in cases {
-        for priority in ["plain", "force"] {
-            let competitor = if priority == "force" {
-                let (path, rhs) = competitor.split_once(" = ").unwrap();
-                format!("{path} = force({rhs})")
-            } else {
-                competitor.to_owned()
-            };
+fn late_whole_values_reject_equal_or_lower_priority_competitors() {
+    for (ty, value, path, rhs) in [
+        ("Map<Str, Int>", "{ a = n }", "m.a", "2"),
+        ("Item", "Item { a = n }", "m.a", "2"),
+        ("Data", "{ a = n }", "m", "{ b = 2 }"),
+        ("Option<Map<Str, Int>>", "{ a = n }", "m.a", "2"),
+        ("Option<Item>", "Item { a = n }", "m.a", "2"),
+        ("Option<Data>", "{ a = n }", "m", "{ b = 2 }"),
+    ] {
+        for (whole, other) in [
+            ("make(self.n)", rhs.to_owned()),
+            ("make(self.n)", format!("default({rhs})")),
+            ("force(make(self.n))", rhs.to_owned()),
+            ("force(make(self.n))", format!("force({rhs})")),
+            ("default(make(self.n))", format!("default({rhs})")),
+        ] {
             let text = format!(
                 "struct Item {{ a: Int = 0, b: Int = 3 }}\n\
                  struct Root {{ n: Int = 1, m: {ty} }}\n\
                  fn make(n: Int) -> {ty} = {value}\n\
-                 m = make(self.n)\n{competitor}\n"
+                 m = {whole}\n{path} = {other}\n"
             );
-            let fixture = fixture(&text);
-            let checked = check(&fixture.host, &fixture.root).expect("the program checks");
-            let result = checked.eval(&fixture.limits);
-            let diagnostics = match result {
-                Ok(value) => panic!(
-                    "expected E0504 for {text}, got {}",
-                    value.to_canonical_json()
-                ),
-                Err(d) => d,
-            };
-            let codes: Vec<_> = diagnostics.iter().map(|d| d.diagnostic.code).collect();
-            assert_eq!(codes, ["E0504"], "{text}\n{diagnostics}");
-            let diagnostic = &diagnostics.iter().next().unwrap().diagnostic;
+            assert_late_whole_error(&text);
+        }
+    }
+}
+
+fn assert_late_whole_error(text: &str) {
+    let fixture = fixture(text);
+    let checked = check(&fixture.host, &fixture.root).expect("the program checks");
+    let diagnostics = checked.eval(&fixture.limits).expect_err(text);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.diagnostic.code).collect();
+    assert_eq!(codes, ["E0504"], "{text}\n{diagnostics}");
+    let diagnostic = &diagnostics
+        .iter()
+        .next()
+        .expect("E0504 has a diagnostic")
+        .diagnostic;
+    assert!(diagnostic.labels.len() >= 2);
+}
+
+#[test]
+fn late_whole_values_allow_only_higher_priority_contributions() {
+    for (ty, value, path, rhs, expected) in [
+        (
+            "Map<Str, Int>",
+            "{ a = n, c = n }",
+            "m.a",
+            "2",
+            r#"{"a":2,"c":1}"#,
+        ),
+        ("Item", "Item { a = n }", "m.a", "2", r#"{"a":2,"b":3}"#),
+        ("Data", "{ a = n }", "m", "{ b = 2 }", r#"{"b":2}"#),
+        (
+            "Option<Map<Str, Int>>",
+            "{ a = n, c = n }",
+            "m.a",
+            "2",
+            r#"{"a":2,"c":1}"#,
+        ),
+        (
+            "Option<Item>",
+            "Item { a = n }",
+            "m.a",
+            "2",
+            r#"{"a":2,"b":3}"#,
+        ),
+        ("Option<Data>", "{ a = n }", "m", "{ b = 2 }", r#"{"b":2}"#),
+    ] {
+        for (whole, other) in [
+            ("default(make(self.n))", rhs.to_owned()),
+            ("default(make(self.n))", format!("force({rhs})")),
+            ("make(self.n)", format!("force({rhs})")),
+        ] {
+            let text = format!(
+                "struct Item {{ a: Int = 0, b: Int = 3 }}\n\
+                 struct Root {{ n: Int = 1, m: {ty} }}\n\
+                 fn make(n: Int) -> {ty} = {value}\n\
+                 m = {whole}\n{path} = {other}\n"
+            );
+            let value: serde_json::Value =
+                serde_json::from_str(&canonical(&text).expect(&text)).unwrap();
             assert_eq!(
-                &text[diagnostic.span.start as usize..diagnostic.span.end as usize],
-                "make(self.n)"
+                value["m"],
+                serde_json::from_str::<serde_json::Value>(expected).unwrap(),
+                "{text}"
             );
-            assert!(diagnostic.labels.len() >= 2, "{diagnostics}");
         }
     }
 }
 
 #[test]
-fn late_whole_values_allow_lower_priority_contributions_and_defaults() {
-    for (ty, value, lower, expected) in [
-        (
-            "Map<Str, Int>",
-            "{ a = n }",
-            "m.b = default(2)",
-            r#"{"a":1,"b":2}"#,
-        ),
-        (
-            "Item",
-            "Item { a = n }",
-            "m.a = default(2)",
-            r#"{"a":1,"b":3}"#,
-        ),
-        ("Data", "{ a = n }", "m = default({ b = 2 })", r#"{"a":1}"#),
-        (
-            "Option<Map<Str, Int>>",
-            "{ a = n }",
-            "m.b = default(2)",
-            r#"{"a":1,"b":2}"#,
-        ),
-        (
-            "Option<Item>",
-            "Item { a = n }",
-            "m.a = default(2)",
-            r#"{"a":1,"b":3}"#,
-        ),
-        (
-            "Option<Data>",
-            "{ a = n }",
-            "m = default({ b = 2 })",
-            r#"{"a":1}"#,
-        ),
-    ] {
-        let text = format!(
-            "struct Item {{ a: Int = 0, b: Int = 3 }}\n\
-             struct Root {{ n: Int = 1, m: {ty} }}\n\
-             fn make(n: Int) -> {ty} = {value}\n\
-             m = make(self.n)\n{lower}\n"
-        );
-        let value: serde_json::Value =
-            serde_json::from_str(&canonical(&text).expect(&text)).unwrap();
-        assert_eq!(
-            value["m"],
-            serde_json::from_str::<serde_json::Value>(expected).unwrap()
-        );
-    }
+fn late_whole_values_reject_lower_priority_declared_defaults() {
+    let text = "struct Root { n: Int = 1, m: Map<Str, Int> = {} }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
+                m = make(self.n)\n";
+    assert_late_whole_error(text);
 }
 
 #[test]
-fn optional_none_cannot_hide_an_invalid_late_whole_value() {
-    let text = "struct Root { n: Int = 1, m: Option<Map<Str, Int>> }\n\
-                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
-                m = make(self.n)\nm = force(none)\n";
-    let error = canonical(text).expect_err("the higher priority none is a competitor");
-    assert!(error.contains("E0504"), "{error}");
+fn optional_none_replaces_a_lower_priority_late_whole_without_evaluating_it() {
+    let text = "struct Root { zero: Int = 0, m: Option<Map<Str, Int>> }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = 1 / n }\n\
+                m = make(self.zero)\nm = force(none)\n";
+    assert_eq!(canonical(text).unwrap(), r#"{"m":null,"zero":0}"#);
 }
 
 #[test]
@@ -1181,13 +1184,76 @@ fn late_whole_defaults_do_not_compete_with_their_own_child_defaults() {
 }
 
 #[test]
-fn late_whole_defaults_reject_explicit_default_contributions() {
-    let text = "struct Item { a: Int = 0 }\n\
+fn late_whole_defaults_accept_explicit_default_contributions() {
+    let text = "struct Item { a: Int = 0, b: Int = 3 }\n\
                 struct Root { n: Int = 1, m: Item = make(self.n) }\n\
                 fn make(n: Int) -> Item = Item { a = n }\n\
                 m = default({ a = 2 })\n";
-    let error = canonical(text).expect_err("the explicit default is a competitor");
-    assert!(error.contains("E0504"), "{error}");
+    assert_eq!(canonical(text).unwrap(), r#"{"m":{"a":2,"b":3},"n":1}"#);
+}
+
+#[test]
+fn late_whole_static_errors_do_not_depend_on_produced_keys_or_cycles() {
+    for n in [0, 1, 2] {
+        for declared in ["", " = {}"] {
+            let cases = [
+                format!(
+                    "struct Root {{ n: Int = {n}, k: Int = 2, m: Map<Str, Map<Str, Int>>{declared} }}\n\
+                fn outer(n: Int) -> Map<Str, Map<Str, Int>> = if n == 1 {{ {{ x = {{ a = n }} }} }} else {{ {{}} }}\n\
+                fn inner(k: Int) -> Map<Str, Int> = {{ b = k }}\n\
+                m = force(outer(self.n))\nm.x = inner(self.k)\n"
+                ),
+                format!(
+                    "struct Root {{ k: Int = {n}, n: Int = 0, m: Map<Str, Int>{declared} }}\n\
+                fn make(k: Int) -> Map<Str, Int> = {{ a = k }}\n\
+                m = force(make(self.k))\nm.a = self.n\nn = self.m[\"a\"]\n"
+                ),
+                format!(
+                    "struct Root {{ k: Int = {n}, zero: Int = 0, m: Map<Str, Int>{declared} }}\n\
+                fn make(k: Int) -> Map<Str, Int> = if k == 1 {{ {{}} }} else {{ {{ a = k }} }}\n\
+                m = make(self.k)\nm.a = default(1 / self.zero)\n"
+                ),
+            ];
+            for text in cases {
+                assert_late_whole_error(&text);
+            }
+        }
+    }
+}
+#[test]
+fn late_whole_source_defaults_accept_subfields_and_complete_literals() {
+    let prefix = "struct Source { url: Str, sha256: Str = \"\" }\n\
+                  fn hosted(v: Str) -> Source = Source { url = \"u/#{v}\" }\n\
+                  struct Pkg { version: Str, source: Source = hosted(self.version) }\n\
+                  struct Root { pkgs: Map<Str, Pkg> = {} block pkg }\n";
+    assert_eq!(
+        canonical(&format!(
+            "{prefix}pkg a {{ version = \"1\", source.sha256 = \"abc\" }}\n"
+        ))
+        .unwrap(),
+        r#"{"pkgs":{"a":{"source":{"sha256":"abc","url":"u/1"},"version":"1"}}}"#
+    );
+    let failing = prefix.replace("url = \"u/#{v}\"", "url = \"#{1 / 0}/#{v}\"");
+    assert_eq!(canonical(&format!("{failing}pkg a {{ version = \"1\", source = force({{ url = \"mirror\", sha256 = \"abc\" }}) }}\n")).unwrap(),
+        r#"{"pkgs":{"a":{"source":{"sha256":"abc","url":"mirror"},"version":"1"}}}"#);
+}
+
+#[test]
+fn nested_higher_late_wholes_do_not_validate_emitted_values() {
+    for n in [0, 1] {
+        let text = format!(
+            "struct Root {{ n: Int = {n}, k: Int = 2, m: Map<Str, Map<Str, Int>> }}\n\
+            fn outer(n: Int) -> Map<Str, Map<Str, Int>> = if n == 1 {{ {{ x = {{ a = n }}, y = {{ c = n }} }} }} else {{ {{}} }}\n\
+            fn inner(k: Int) -> Map<Str, Int> = {{ b = k }}\n\
+            m = default(outer(self.n))\nm.x = inner(self.k)\n"
+        );
+        let expected = if n == 1 {
+            r#"{"k":2,"m":{"x":{"b":2},"y":{"c":1}},"n":1}"#
+        } else {
+            r#"{"k":2,"m":{"x":{"b":2}},"n":0}"#
+        };
+        assert_eq!(canonical(&text).expect(&text), expected);
+    }
 }
 
 #[test]
@@ -1229,13 +1295,13 @@ fn map_values_and_field_default_expression_lets_keep_their_self_reads() {
 #[test]
 fn late_map_and_struct_literals_remain_allowed_with_competitors() {
     let text = "struct Item { a: Int = 0, b: Int = 3 }\n\
-                struct Root { n: Int = 1, m: Map<Str, Int> = {}, item: Item = {}, data: Data = none }\n\
+                struct Root { n: Int = 1, m: Map<Str, Int> = {}, item: Item = {} }\n\
                 m = ({ a = self.n })\nm.b = 2\n\
                 item = (Item { a = self.n })\nitem.b = 2\n\
-                data = ({ a = self.n })\ndata = { b = 2 }\n";
+";
     assert_eq!(
         canonical(text).unwrap(),
-        r#"{"data":{"a":1,"b":2},"item":{"a":1,"b":2},"m":{"a":1,"b":2},"n":1}"#
+        r#"{"item":{"a":1,"b":2},"m":{"a":1,"b":2},"n":1}"#
     );
 }
 
@@ -1258,13 +1324,15 @@ fn late_whole_values_check_other_contributions_at_the_whole_path() {
 }
 
 #[test]
-fn late_data_list_and_string_literals_keep_their_static_shape() {
-    for (rhs, other, expected) in [
-        ("[self.n]", "[2]", r#"{"d":[1,2],"n":1}"#),
-        ("\"#{self.n}\"", "\"1\"", r#"{"d":"1","n":1}"#),
+fn late_data_literals_are_whole_values_regardless_of_syntax() {
+    for rhs in [
+        "{ a = self.n }",
+        "({ a = self.n })",
+        "[self.n]",
+        "\"#{self.n}\"",
     ] {
-        let text = format!("struct Root {{ n: Int = 1, d: Data }}\nd = {rhs}\nd = {other}\n");
-        assert_eq!(canonical(&text).expect(&text), expected);
+        let text = format!("struct Root {{ n: Int = 1, d: Data }}\nd = {rhs}\nd = {{ b = 2 }}\n");
+        assert_late_whole_error(&text);
     }
 }
 
@@ -1549,4 +1617,235 @@ fn decomposed_map_literals_reject_duplicate_computed_keys() {
                 m = { \"#{key}\" = [self.n], a = [self.n] }\n";
     let error = canonical(text).expect_err("duplicate literal entries cannot concatenate");
     assert!(error.contains("E0605"), "{error}");
+}
+
+#[test]
+fn fully_overridden_late_whole_defaults_do_not_add_instance_cycle_edges() {
+    let text = "#! entries main.stav overlay.stav\n\
+                #- file main.stav\n\
+                struct Item { a: Int, b: Int }\n\
+                struct Root { n: Int = 1, cfg: Item = make(self.n) }\n\
+                fn make(n: Int) -> Item = Item { a = n, b = n }\n\
+                n = self.cfg.a\n\
+                #- file overlay.stav\ncfg.a = 7\ncfg.b = 9\n";
+    assert_eq!(canonical(text).unwrap(), r#"{"cfg":{"a":7,"b":9},"n":7}"#);
+}
+
+#[test]
+fn late_whole_conflicts_count_empty_present_markers() {
+    let text = "struct Root { n: Int = 1, m: Map<Str, Int> }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
+                m = make(self.n)\nm = {}\n";
+    assert_late_whole_error(text);
+}
+
+#[test]
+fn late_whole_conflict_labels_do_not_repeat_present_value_spans() {
+    let text = "struct Root { n: Int = 1, m: Map<Str, Int> }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
+                m = force(make(self.n))\nm = if true { { a = 2 } } else { {} }\n";
+    let fixture = fixture(text);
+    let checked = check(&fixture.host, &fixture.root).expect("the program checks");
+    let diagnostics = checked
+        .eval(&fixture.limits)
+        .expect_err("the lower value competes");
+    let diagnostic = &diagnostics.iter().next().unwrap().diagnostic;
+    assert_eq!(diagnostic.code, "E0504");
+    for label in &diagnostic.labels {
+        if label.message.starts_with("present") {
+            assert!(
+                !diagnostic.labels.iter().any(|other| {
+                    !other.message.starts_with("present")
+                        && other.file == label.file
+                        && other.span == label.span
+                }),
+                "{diagnostics}"
+            );
+        }
+    }
+}
+
+#[test]
+fn higher_map_and_partial_struct_literals_preserve_unmentioned_whole_fields() {
+    let text = "struct Source { url: Str, sha256: Str = \"\" }\n\
+                struct Root { n: Int = 1, m: Map<Str, Int>, source: Source = hosted(self.n) }\n\
+                fn hosted(n: Int) -> Source = Source { url = \"u/#{n}\" }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n, b = n }\n\
+                m = default(make(self.n))\nm = force({ a = 2 })\n\
+                source = force({ sha256 = \"abc\" })\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"m":{"a":2,"b":1},"n":1,"source":{"sha256":"abc","url":"u/1"}}"#
+    );
+}
+
+#[test]
+fn declared_late_wholes_accept_every_explicit_priority_across_container_types() {
+    for (ty, value, path, rhs, expected) in [
+        (
+            "Map<Str, Int>",
+            "{ a = n, b = n }",
+            "m.a",
+            "2",
+            r#"{"a":2,"b":1}"#,
+        ),
+        ("Item", "Item { a = n }", "m.a", "2", r#"{"a":2,"b":3}"#),
+        ("Data", "{ a = n }", "m", "{ b = 2 }", r#"{"b":2}"#),
+        (
+            "Option<Map<Str, Int>>",
+            "{ a = n, b = n }",
+            "m.a",
+            "2",
+            r#"{"a":2,"b":1}"#,
+        ),
+        (
+            "Option<Item>",
+            "Item { a = n }",
+            "m.a",
+            "2",
+            r#"{"a":2,"b":3}"#,
+        ),
+        ("Option<Data>", "{ a = n }", "m", "{ b = 2 }", r#"{"b":2}"#),
+    ] {
+        for other in [
+            format!("default({rhs})"),
+            rhs.to_owned(),
+            format!("force({rhs})"),
+        ] {
+            let text = format!(
+                "struct Item {{ a: Int = 0, b: Int = 3 }}\n\
+                struct Root {{ n: Int = 1, m: {ty} = make(self.n) }}\n\
+                fn make(n: Int) -> {ty} = {value}\n{path} = {other}\n"
+            );
+            let value: serde_json::Value =
+                serde_json::from_str(&canonical(&text).expect(&text)).unwrap();
+            assert_eq!(
+                value["m"],
+                serde_json::from_str::<serde_json::Value>(expected).unwrap(),
+                "{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn higher_none_cannot_hide_static_equal_priority_whole_conflicts() {
+    let text = "struct Root { n: Int = 1, m: Option<Map<Str, Int>> }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
+                m = make(self.n)\nm.a = 2\nm = force(none)\n";
+    assert_late_whole_error(text);
+}
+
+#[test]
+fn enclosing_absent_options_do_not_hide_static_whole_conflicts() {
+    let text = "struct Box { m: Map<Str, Int> }\n\
+                struct Root { n: Int = 1, cfg: Option<Box> }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
+                cfg.m = make(self.n)\ncfg.m.a = 2\ncfg = force(none)\n";
+    assert_late_whole_error(text);
+}
+
+#[test]
+fn nested_declared_defaults_do_not_add_losing_edges_before_wholes_settle() {
+    let text = "struct Inner { a: Int = self.b, b: Int = 0 }\n\
+                struct Outer { inner: Inner }\n\
+                struct Root { seed: Int = 1, cfg: Outer }\n\
+                fn make(n: Int) -> Outer = Outer { inner = Inner { a = n, b = n } }\n\
+                cfg = default(make(self.seed))\n\
+                cfg { inner { b = self.a } }\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"cfg":{"inner":{"a":1,"b":1}},"seed":1}"#
+    );
+}
+
+#[test]
+fn empty_struct_fields_do_not_vacuously_override_late_wholes() {
+    let text = "struct Empty {}\nstruct Item { e: Empty }\n\
+                struct Root { n: Int = 1, m: Item }\n\
+                fn make(n: Int) -> Item = Item { e = Empty {} }\n\
+                m = make(self.n)\n";
+    assert_eq!(canonical(text).unwrap(), r#"{"m":{"e":{}},"n":1}"#);
+}
+
+#[test]
+fn late_whole_conflicts_take_precedence_over_optional_presence_conflicts() {
+    for ty in ["Map<Str, Int>", "Item", "Data"] {
+        let value = if ty == "Item" {
+            "Item { a = n }"
+        } else {
+            "{ a = n }"
+        };
+        let text = format!(
+            "struct Item {{ a: Int }}\n\
+            struct Root {{ n: Int = 1, m: Option<{ty}> }}\n\
+            fn make(n: Int) -> {ty} = {value}\n\
+            m = make(self.n)\nm = none\n"
+        );
+        assert_late_whole_error(&text);
+    }
+}
+
+#[test]
+fn higher_nested_wholes_keep_omitted_defaults_before_outer_wholes_settle() {
+    let text = "struct Item { a: Int, b: Int = 3 }\n\
+                struct Root { n: Int = 1, k: Int = 2, m: Map<Str, Map<Str, Item>> }\n\
+                fn outer(n: Int) -> Map<Str, Map<Str, Item>> = { x = { old = Item { a = n } } }\n\
+                fn inner(k: Int) -> Map<Str, Item> = { new = Item { a = k } }\n\
+                m = default(outer(self.n))\nm.x = inner(self.k)\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"k":2,"m":{"x":{"new":{"a":2,"b":3}}},"n":1}"#
+    );
+}
+
+#[test]
+fn fully_overridden_outer_wholes_do_not_suppress_higher_nested_defaults() {
+    let text = "struct Item { a: Int, b: Int = 3 }\n\
+                struct Outer { inner: Map<Str, Item>, n: Int }\n\
+                struct Root { zero: Int = 0, cfg: Outer = outer(self.zero) }\n\
+                fn outer(n: Int) -> Outer = Outer { inner = {}, n = 1 / n }\n\
+                fn inner(k: Int) -> Map<Str, Item> = { new = Item { a = k } }\n\
+                cfg.inner = inner(self.zero)\ncfg.n = 7\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"cfg":{"inner":{"new":{"a":0,"b":3}},"n":7},"zero":0}"#
+    );
+}
+
+#[test]
+fn settling_outer_wholes_reaches_newly_installed_pending_defaults() {
+    let text = "fn make_map(n: Int) -> Map<Str, Int> = { a = n }\n\
+                struct Cfg { seed: Int, m: Map<Str, Int> = make_map(self.seed), result: Int }\n\
+                struct Root { n: Int = 1, cfg: Cfg }\n\
+                fn make_cfg(n: Int) -> Cfg = Cfg { seed = n, result = 0 }\n\
+                cfg = default(make_cfg(self.n))\ncfg { result = self.m[\"a\"] }\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"cfg":{"m":{"a":1},"result":1,"seed":1},"n":1}"#
+    );
+}
+
+#[test]
+fn enclosing_pending_wholes_do_not_hide_static_declared_default_competitors() {
+    let text = "struct Box { m: Map<Str, Int> = {} }\n\
+                struct Root { n: Int = 1, cfg: Box }\n\
+                fn make_box(n: Int) -> Box = Box {}\n\
+                fn make_map(n: Int) -> Map<Str, Int> = { a = n }\n\
+                cfg = default(make_box(self.n))\ncfg.m = make_map(self.n)\n";
+    assert_late_whole_error(text);
+}
+
+#[test]
+fn declaration_collection_keeps_eager_default_errors() {
+    for default in ["{}", "make(self.n)"] {
+        let text = format!(
+            "fn bad() -> Int = 1 / 0\n\
+            struct Item {{ a: Int = bad() }}\n\
+            struct Root {{ n: Int = 1, cfg: Item = {default} }}\n\
+            fn make(n: Int) -> Item = Item {{ a = n }}\ncfg.a = 7\n"
+        );
+        let error = canonical(&text).expect_err("eager defaults are evaluated during collection");
+        assert!(error.contains("E0603"), "{text}\n{error}");
+    }
 }
