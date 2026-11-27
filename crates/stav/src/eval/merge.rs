@@ -8,7 +8,7 @@
 //! computes attributes on demand, evaluates participating contributions after
 //! their dependencies, and memoizes the resulting values.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -159,6 +159,8 @@ pub(crate) struct Merge {
     attributes: BTreeSet<u32>,
     /// Whether static whole validation has completed.
     static_checked: bool,
+    /// Creator witnesses reused during structure and revalidated after mutations.
+    fallback_creators: Option<RefCell<BTreeMap<NodeId, (NodeId, u32)>>>,
     /// Whether this trie is a disposable graph containing placeholder instances.
     pub(crate) graph_only: bool,
 }
@@ -398,6 +400,7 @@ impl<'c> Eval<'c> {
             self.merge.insert(NodeId::ROOT, &p.path, p.contrib);
         }
         self.static_paths(NodeId::ROOT, self.c.root_ty, false);
+        self.merge.fallback_creators = Some(RefCell::new(BTreeMap::new()));
         self.structure(NodeId::ROOT, self.c.root_ty)?;
         self.static_paths(NodeId::ROOT, self.c.root_ty, true);
         if !self.errors.is_empty() {
@@ -416,8 +419,16 @@ impl<'c> Eval<'c> {
             .filter(|node| !node.checks.is_empty())
             .filter_map(|node| node.parent)
             .collect();
-        fallback_owners.retain(|&owner| self.potential_fallback(owner));
+        let mut creators = BTreeMap::new();
+        fallback_owners.retain(|&owner| {
+            self.potential_fallback_with(owner, |boundary| {
+                *creators
+                    .entry(boundary)
+                    .or_insert_with(|| self.fallback_creator(boundary))
+            })
+        });
         let order = self.check_cycles(NodeId::ROOT, &fallback_owners)?;
+        self.merge.fallback_creators = None;
         if !self.errors.is_empty() {
             return Ok(Val::None);
         }
@@ -698,8 +709,6 @@ impl<'c> Eval<'c> {
 
     /// Types fixed paths before coverage queries, optionally validating wholes.
     /// Absent options and unselected variants are included, but late values are not.
-    /// Without pretyping, coverage repeatedly scanned growing typed prefixes:
-    /// merging 800, 1600 and 3200 struct fields took 85, 330 and 1365 ms.
     fn static_paths(&mut self, n: NodeId, ty: TypeId, validate: bool) {
         self.merge.set_type(n, ty);
         self.classify_wholes(n);
@@ -845,10 +854,8 @@ impl<'c> Eval<'c> {
     }
 
     /// Whether higher contributions, including supplied whole-value parts,
-    /// determine every part of `n`. Debug runs of 800, 1600 and 3200 fields
-    /// took 0.546, 1.786 and 7.409 seconds without memoization. Four priority
-    /// slots make each node's recursive coverage scan run once per unchanged
-    /// set of higher contributions. Mutations invalidate only affected nodes
+    /// determine every part of `n`. Four priority slots make each node's
+    /// recursive coverage scan run once per unchanged set of higher contributions. Mutations invalidate only affected nodes
     /// and ancestors, never value memoization or winner selection.
     fn covered(&self, n: NodeId, priority: Prio) -> bool {
         if let Some(found) = self.merge.node(n).coverage.get()[priority as usize] {
@@ -1005,6 +1012,10 @@ impl<'c> Eval<'c> {
 
     /// Whether an instance can be created where its enclosing whole lacks it.
     fn potential_fallback(&self, n: NodeId) -> bool {
+        self.potential_fallback_with(n, |boundary| self.fallback_creator(boundary))
+    }
+
+    fn potential_fallback_with(&self, n: NodeId, mut creator: impl FnMut(NodeId) -> bool) -> bool {
         let mut current = Some(n);
         let mut boundaries = Vec::new();
         while let Some(c) = current {
@@ -1017,10 +1028,7 @@ impl<'c> Eval<'c> {
                 matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if d.form == DeferredForm::MapLiteral)
             });
             if node.late_whole || computed_map {
-                return !boundaries.is_empty()
-                    && boundaries
-                        .into_iter()
-                        .all(|boundary| self.fallback_creator(boundary));
+                return !boundaries.is_empty() && boundaries.into_iter().all(&mut creator);
             }
             if !option
                 && matches!(
@@ -1052,31 +1060,57 @@ impl<'c> Eval<'c> {
                     && (matches!(contrib.kind, Kind::Value(Val::None))
                         || matches!(&contrib.kind, Kind::Deferred(d) if d.is_late())))
         };
+        // A witness survives additions only while it remains attached and
+        // applicable. Rechecking also observes spent or replaced defaults,
+        // newly typed boundaries and refreshed suspended checks.
+        if let Some(cache) = &self.merge.fallback_creators {
+            let witness = cache.borrow().get(&boundary).copied();
+            if let Some((n, id)) = witness {
+                let node = self.merge.node(n);
+                let attached = node.contribs.contains(&id) || node.checks.contains(&id);
+                let selection = self.merge.node(boundary).parent != Some(n)
+                    || matches!(
+                        (&self.merge.node(boundary).seg, &self.merge.contrib(id).kind),
+                        (Some(Seg::Variant(v)), Kind::Select(selected)) if v == selected
+                    );
+                if attached && selection && applicable(n, id) {
+                    return true;
+                }
+            }
+        }
+        let remember = |n, id| {
+            if let Some(cache) = &self.merge.fallback_creators {
+                cache.borrow_mut().insert(boundary, (n, id));
+            }
+            true
+        };
         let node = self.merge.node(boundary);
         if let (Some(Seg::Variant(variant)), Some(parent)) = (&node.seg, node.parent)
-            && self
+            && let Some(id) = self
                 .merge
                 .node(parent)
                 .contribs
                 .iter()
                 .chain(&self.merge.node(parent).checks)
-                .any(|&id| {
+                .copied()
+                .find(|&id| {
                     matches!(self.merge.contrib(id).kind, Kind::Select(v) if v == *variant)
                         && applicable(parent, id)
                 })
         {
-            return true;
+            return remember(parent, id);
         }
         let mut stack = vec![boundary];
         while let Some(n) = stack.pop() {
             let node = self.merge.node(n);
-            if node
+            if let Some(id) = node
                 .contribs
                 .iter()
                 .chain(&node.checks)
-                .any(|&id| applicable(n, id))
+                .copied()
+                .find(|&id| applicable(n, id))
             {
-                return true;
+                return remember(n, id);
             }
             stack.extend(node.children.values().copied());
         }
@@ -2009,6 +2043,7 @@ impl<'c> Eval<'c> {
         let original = std::mem::replace(&mut self.merge, graph);
         let original_len = original.nodes.len();
         self.merge.graph_only = true;
+        self.merge.fallback_creators = Some(RefCell::new(BTreeMap::new()));
         let result = (|| {
             let mut expanded = BTreeSet::new();
             while let Some((n, id)) = pending.pop() {
@@ -2054,7 +2089,15 @@ impl<'c> Eval<'c> {
                 .filter(|node| !node.checks.is_empty())
                 .filter_map(|node| node.parent)
                 .collect();
-            owners.retain(|&owner| self.potential_fallback(owner));
+            self.merge.fallback_creators = None;
+            let mut creators = BTreeMap::new();
+            owners.retain(|&owner| {
+                self.potential_fallback_with(owner, |boundary| {
+                    *creators
+                        .entry(boundary)
+                        .or_insert_with(|| self.fallback_creator(boundary))
+                })
+            });
             self.dependency_order(top, &owners)
         })();
         self.merge = original;
@@ -2084,9 +2127,8 @@ impl<'c> Eval<'c> {
     /// Reports cycles among the deferred contributions the merge may evaluate
     /// at and inside `top`, and stops when there is one. Otherwise returns the
     /// attributes in an order where each comes after the attributes it
-    /// depends on. The shared static fallback-owner snapshot avoids rescanning
-    /// each owner per field, which took 99, 362 and 1390 ms for 800, 1600 and
-    /// 3200 fields. Finalizing in dependency order never recurses
+    /// depends on. A shared static fallback-owner snapshot avoids rescanning
+    /// each owner per field. Finalizing in dependency order never recurses
     /// along a long chain of dependencies.
     fn dependency_order(
         &mut self,
