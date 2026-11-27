@@ -1,0 +1,17 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "zero": 0,
+  "x": 7,
+  "cfg": {
+    "a": 7,
+    "b": 0
+  },
+  "m": {
+    "a": 7,
+    "b": 0
+  }
+}

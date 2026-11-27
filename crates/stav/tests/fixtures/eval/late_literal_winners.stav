@@ -1,0 +1,8 @@
+struct Settings { a: Int, b: Int }
+struct Root { zero: Int = 0, x: Int, cfg: Settings, m: Map<Str, Int> = {} }
+x = default(1 / self.zero)
+x = 7
+cfg = default({ a = 1 / self.zero, b = self.zero })
+cfg.a = 7
+m = default({ a = 1 / self.zero, b = self.zero })
+m.a = 7

@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use super::body::{Contrib, Deferred, Kind, Parts, Pending, Prio, Written};
+use super::body::{Body, Contrib, Deferred, Kind, Parts, Pending, Prio, Written};
 use super::call::Building;
 use super::env::Env;
 use super::val::{Key, Val};
@@ -618,17 +618,20 @@ impl<'c> Eval<'c> {
                     self.merge.insert(child, &p.path, p.contrib.clone());
                 }
             } else {
-                let instance: Rc<[Seg]> = self.merge.path(n).into();
-                let deferred = Deferred {
+                let body = Body {
                     unit,
-                    node,
+                    file,
+                    base: Vec::new(),
+                    frames: vec![self.merge.path(n)],
                     env: Env::default(),
-                    frames: vec![instance],
-                    ty: field.ty,
-                    reads: reads.to_vec(),
+                    via: None,
                 };
-                self.merge
-                    .insert(child, &[], template.with(Kind::Deferred(Rc::new(deferred))));
+                let e = self.expr_at(unit, node)?;
+                let mut out = Vec::new();
+                self.contribute(&body, Vec::new(), field.ty, e, &template, &mut out)?;
+                for p in out {
+                    self.merge.insert(child, &p.path, p.contrib);
+                }
             }
         }
         Ok(())
@@ -658,14 +661,16 @@ impl<'c> Eval<'c> {
             return Ok(Rc::new(Vec::new()));
         };
         let e = self.expr_at(unit, node)?;
-        let cx = super::expr::Cx {
+        let body = Body {
             unit,
             file: template.file,
+            base: Vec::new(),
             env: Env::default(),
-            frames: &[],
+            frames: Vec::new(),
+            via: None,
         };
         let mut out = Vec::new();
-        self.contribute(&cx, Vec::new(), ty, e, template, &mut out)?;
+        self.contribute(&body, Vec::new(), ty, e, template, &mut out)?;
         let out = Rc::new(out);
         self.caches.defaults.insert((s, field), out.clone());
         Ok(out)
@@ -1498,17 +1503,9 @@ impl<'c> Eval<'c> {
         if let (Some(node), Some(unit)) = (
             def.fields.get(field).and_then(|f| f.default),
             self.file_unit(def.file),
-        ) {
-            let mut stack: Vec<crate::syntax::SyntaxNode<'c>> =
-                self.tree(def.file).node(node).into_iter().collect();
-            while let Some(node) = stack.pop() {
-                if let crate::check::model::Fact::Expr(fact) = self.fact(unit, node.index())
-                    && let crate::check::model::Meaning::SelfField(read) = fact.meaning
-                {
-                    reads.push(read);
-                }
-                stack.extend(node.children());
-            }
+        ) && let crate::check::model::Fact::Expr(fact) = self.fact(unit, node)
+        {
+            reads = fact.reads.clone();
         }
         let reads = Rc::new(reads);
         self.caches.reads.insert((s, field), reads.clone());

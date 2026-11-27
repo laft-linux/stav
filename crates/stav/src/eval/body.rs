@@ -4,9 +4,9 @@
 //! value at a path, with a priority, and each block marks the attribute it
 //! maps to as present. A struct or map literal on the right side of an
 //! attribute contributes each field or key it sets, so that it merges with
-//! contributions from elsewhere. A right side that reads `self` becomes a
-//! deferred contribution, evaluated once the merge knows the values it
-//! reads.
+//! contributions from elsewhere. After splitting literals, a child that
+//! reads `self` becomes a deferred contribution, evaluated only if it wins
+//! the merge, once the values it reads are known.
 
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -468,38 +468,25 @@ impl<'c> Eval<'c> {
         let value = self.expr_at(body.unit, fact.value)?;
         let span = value.syntax().span();
         let prio = Prio::from(fact.priority);
-        if fact.reads.is_empty() {
-            let template = body.contrib(prio, Kind::Present, span);
-            return self.contribute(&body.cx(), path, fact.ty, value, &template, out);
-        }
-        let deferred = Deferred {
-            unit: body.unit,
-            node: fact.value,
-            env: body.env.clone(),
-            frames: body.frames.iter().map(|f| f.as_slice().into()).collect(),
-            ty: fact.ty,
-            reads: fact.reads.clone(),
-        };
-        out.push(Pending {
-            path,
-            contrib: body.contrib(prio, Kind::Deferred(Rc::new(deferred)), span),
-        });
-        Ok(())
+        let template = body.contrib(prio, Kind::Present, span);
+        self.contribute(body, path, fact.ty, value, &template, out)
     }
 
     /// Contributes the value of `e` at `path`: a struct or map literal one
     /// contribution per field or key it sets, a struct or map value one
     /// per field or key it has, and any other value as a whole. The
-    /// contributions copy `template` with their own kinds.
+    /// contributions copy `template` with their own kinds. Literal children
+    /// are collected recursively, deferring only those that read `self`.
     pub(crate) fn contribute(
         &mut self,
-        cx: &Cx<'_>,
+        body: &Body,
         path: Vec<Seg>,
         ty: TypeId,
         e: Expr<'c>,
         template: &Contrib,
         out: &mut Vec<Pending>,
     ) -> R<()> {
+        let cx = &body.cx();
         let types = &self.c.types;
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
         let meaning = match self.fact(cx.unit, e.syntax().index()) {
@@ -509,7 +496,7 @@ impl<'c> Eval<'c> {
         match (e, types.get(inner).clone()) {
             (Expr::Paren(paren), _) => {
                 if let Some(e) = paren.expr() {
-                    return self.contribute(cx, path, ty, e, template, out);
+                    return self.contribute(body, path, ty, e, template, out);
                 }
                 Ok(())
             }
@@ -542,7 +529,7 @@ impl<'c> Eval<'c> {
                     let mut sub = path.clone();
                     sub.push(Seg::Field(u32::try_from(index).unwrap_or(u32::MAX)));
                     let template = template.spanning(entry.syntax().span());
-                    self.contribute(cx, sub, field_ty, value, &template, out)?;
+                    self.contribute(body, sub, field_ty, value, &template, out)?;
                 }
                 Ok(())
             }
@@ -559,11 +546,36 @@ impl<'c> Eval<'c> {
                     let mut sub = path.clone();
                     sub.push(Seg::Key(name.into()));
                     let template = template.spanning(entry.syntax().span());
-                    self.contribute(cx, sub, value_ty, value, &template, out)?;
+                    self.contribute(body, sub, value_ty, value, &template, out)?;
                 }
                 Ok(())
             }
             _ => {
+                let reads = match self.fact(body.unit, e.syntax().index()) {
+                    Fact::Expr(fact) => &fact.reads,
+                    _ => {
+                        return Err(self.bug(
+                            body.file,
+                            e.syntax().span(),
+                            "an expression has no facts",
+                        ));
+                    }
+                };
+                if !reads.is_empty() {
+                    let deferred = Deferred {
+                        unit: body.unit,
+                        node: e.syntax().index(),
+                        env: body.env.clone(),
+                        frames: body.frames.iter().map(|f| f.as_slice().into()).collect(),
+                        ty,
+                        reads: reads.clone(),
+                    };
+                    out.push(Pending {
+                        path,
+                        contrib: template.with(Kind::Deferred(Rc::new(deferred))),
+                    });
+                    return Ok(());
+                }
                 let (value, parts) = self.written(cx, e)?;
                 let template = Contrib {
                     parts,
@@ -915,7 +927,12 @@ impl<'c> Eval<'c> {
             frames,
         };
         let mut out = Vec::new();
-        self.contribute(&cx, Vec::new(), deferred.ty, e, template, &mut out)?;
+        let (value, parts) = self.written(&cx, e)?;
+        let template = Contrib {
+            parts,
+            ..template.clone()
+        };
+        self.decompose(Vec::new(), deferred.ty, value, &template, &mut out);
         Ok(out)
     }
 }

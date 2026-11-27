@@ -196,6 +196,7 @@ impl<'p> Checker<'p> {
     /// Resolves what a call calls.
     fn callee(&mut self, cx: &mut Cx, callee: Expr<'p>, want: Option<TypeId>) -> CallTarget {
         let span = callee.syntax().span();
+        let start = cx.reads.len();
         let item = match callee {
             Expr::Name(name) => {
                 let Some(token) = name.token() else {
@@ -212,7 +213,12 @@ impl<'p> Checker<'p> {
                         }
                         _ => CallTarget::Value(ty),
                     };
-                    self.fact(cx, callee.syntax(), Fact::Expr(ExprFact { ty, meaning }));
+                    let reads = cx.reads[start..].to_vec();
+                    self.fact(
+                        cx,
+                        callee.syntax(),
+                        Fact::Expr(ExprFact { ty, meaning, reads }),
+                    );
                     return target;
                 }
                 if let Some(s) = want.and_then(|w| self.types.as_sum(w))
@@ -267,7 +273,12 @@ impl<'p> Checker<'p> {
         match item {
             Some(PathItem::Value(g)) => {
                 let (ty, meaning) = self.global_value(cx, g, span);
-                self.fact(cx, callee.syntax(), Fact::Expr(ExprFact { ty, meaning }));
+                let reads = cx.reads[start..].to_vec();
+                self.fact(
+                    cx,
+                    callee.syntax(),
+                    Fact::Expr(ExprFact { ty, meaning, reads }),
+                );
                 match self.globals[g.index()].kind {
                     GlobalKind::Fn(_) => CallTarget::Global(g),
                     GlobalKind::Let(_) => CallTarget::Value(ty),

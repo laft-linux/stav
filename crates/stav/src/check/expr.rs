@@ -35,8 +35,10 @@ impl<'p> Checker<'p> {
     /// is expected, and records what the evaluator needs to know about it.
     /// Returns the type of the expression in its position.
     pub(super) fn expr(&mut self, cx: &mut Cx, e: Expr<'p>, expected: Option<TypeId>) -> TypeId {
+        let start = cx.reads.len();
         let (ty, meaning) = self.expr_kind(cx, e, expected);
-        self.coerce(cx, e, ty, meaning, expected)
+        let reads = cx.reads[start..].to_vec();
+        self.coerce(cx, e, ty, meaning, expected, reads)
     }
 
     fn coerce(
@@ -46,6 +48,7 @@ impl<'p> Checker<'p> {
         ty: TypeId,
         meaning: Meaning,
         expected: Option<TypeId>,
+        reads: Vec<SelfRead>,
     ) -> TypeId {
         let result = match expected {
             None => ty,
@@ -61,7 +64,7 @@ impl<'p> Checker<'p> {
                 exp
             }
         };
-        self.fact(cx, e.syntax(), Fact::Expr(ExprFact { ty, meaning }));
+        self.fact(cx, e.syntax(), Fact::Expr(ExprFact { ty, meaning, reads }));
         result
     }
 

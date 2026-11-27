@@ -36,7 +36,7 @@ Each contribution has one of four priorities, from lowest to highest:
 | plain | `attribute = expr` |
 | `force` | `attribute = force(expr)` |
 
-At every attribute, only the contributions with the highest priority present take part in the merge. Lower ones are discarded.
+At every attribute, only the contributions with the highest priority present take part in the merge. Lower ones are discarded. Priorities are known before deferred values run, so a losing value that reads `self` is never evaluated and adds no dependency. An eager value still runs when its statement is evaluated, even if it later loses. The [`self` guide](/guide/self#how-it-fits-with-eager-evaluation) demonstrates both cases.
 
 <!-- file: priorities.stav -->
 
@@ -209,7 +209,7 @@ The declared default `["declared"]` of `tags` is not part of the result, because
 
 ### Structs, maps and literals
 
-Structs merge field by field and maps merge key by key. A struct or map literal on the right side of an attribute contributes each field or key it sets, at the priority of the statement. Fields it leaves out contribute nothing. That is why a literal, an attribute path and a block can all add to the same value:
+Structs merge field by field and maps merge key by key. A struct or map literal on the right side of an attribute contributes each field or key it sets, at the priority of the statement. This splitting is recursive, including when a literal reads `self` or appears in a declared field default. Each child records only its own reads. Only winning deferred children run, while eager children run before merging. A lower priority literal can therefore lose one child and still supply its siblings. Fields it leaves out contribute nothing. That is why a literal, an attribute path and a block can all add to the same value:
 
 <!-- file: literals.stav -->
 
@@ -410,6 +410,8 @@ error[E0502]: tagged blocks select different variants of `jobs.c.build`
 A payload sum set only through whole values, such as `build = script(target = "x")`, merges like a scalar.
 
 ### Data
+
+Unlike statically typed structs and maps, `Data` keeps whole-value priorities. A literal assigned to `Data` is not split into independently prioritized child contributions. If the whole deferred value loses, none of it runs.
 
 `Data` holds any renderable value, so its merge follows the shape of the winning values at run time. Maps merge key by key, lists concatenate, sets take the union, and anything else merges as a scalar. Map keys come out in canonical order.
 

@@ -98,12 +98,14 @@ pub(crate) enum Fact {
     Pattern(PatternFact),
 }
 
-/// The type and meaning of an expression.
+/// The type, meaning and `self` reads of an expression.
 #[derive(Debug, Clone)]
 pub(crate) struct ExprFact {
     /// The type of the value the expression produces, before coercion.
     pub(crate) ty: TypeId,
     pub(crate) meaning: Meaning,
+    /// The `self` fields this expression reads, including through bindings.
+    pub(crate) reads: Vec<SelfRead>,
 }
 
 /// What an expression node stands for, where the syntax alone does not

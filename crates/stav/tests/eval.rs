@@ -1267,3 +1267,171 @@ fn late_data_list_and_string_literals_keep_their_static_shape() {
         assert_eq!(canonical(&text).expect(&text), expected);
     }
 }
+
+#[test]
+fn losing_late_scalar_is_not_evaluated() {
+    let text = "struct Root { zero: Int = 0, x: Int }\n\
+                x = default(1 / self.zero)\nx = 7\n";
+    assert_eq!(canonical(text).unwrap(), r#"{"x":7,"zero":0}"#);
+}
+
+#[test]
+fn losing_late_literal_children_are_not_evaluated() {
+    for (ty, rhs) in [
+        ("Item", "{ a = 1 / self.zero }"),
+        ("Item", "(Item { a = 1 / self.zero })"),
+        ("Map<Str, Int>", "({ a = 1 / self.zero })"),
+    ] {
+        let text = format!(
+            "struct Item {{ a: Int }}\nstruct Root {{ zero: Int = 0, cfg: {ty} }}\n\
+             cfg = default({rhs})\ncfg.a = 7\n"
+        );
+        assert_eq!(
+            canonical(&text).expect(&text),
+            r#"{"cfg":{"a":7},"zero":0}"#
+        );
+    }
+}
+
+#[test]
+fn late_literals_preserve_nested_siblings_and_declared_defaults() {
+    for (ty, rhs) in [
+        ("Item", "{ a = 1 / self.zero, b = self.n }"),
+        ("Item", "Item { a = 1 / self.zero, b = self.n }"),
+        ("Map<Str, Int>", "{ a = 1 / self.zero, b = self.n }"),
+    ] {
+        for declared in [false, true] {
+            let declaration = if declared {
+                format!(" = {{ inner = {rhs} }}")
+            } else {
+                String::new()
+            };
+            let assignment = if declared {
+                String::new()
+            } else {
+                format!("cfg = default({{ inner = {rhs} }})\n")
+            };
+            let text = format!(
+                "struct Item {{ a: Int = 11, b: Int = 12 }}\nstruct Outer {{ inner: {ty} }}\n\
+                 struct Root {{ zero: Int = 0, n: Int = 3, cfg: Outer{declaration} }}\n\
+                 {assignment}cfg.inner.a = 7\n"
+            );
+            assert_eq!(
+                canonical(&text).expect(&text),
+                r#"{"cfg":{"inner":{"a":7,"b":3}},"n":3,"zero":0}"#
+            );
+        }
+    }
+}
+
+#[test]
+fn optional_none_discards_late_literal_children() {
+    for ty in ["Item", "Map<Str, Int>"] {
+        let text = format!(
+            "struct Item {{ a: Int }}\nstruct Root {{ zero: Int = 0, cfg: Option<{ty}> }}\n\
+             cfg = default({{ a = 1 / self.zero }})\ncfg = none\n"
+        );
+        assert_eq!(canonical(&text).expect(&text), r#"{"cfg":null,"zero":0}"#);
+    }
+}
+
+#[test]
+fn winning_late_children_and_losing_eager_children_still_error() {
+    for (rhs, competitor) in [
+        ("{ a = 1 / self.zero }", ""),
+        ("{ a = 1 / 0 }", "cfg.a = 7"),
+        ("{ a = 1 / 0, b = self.zero }", "cfg.a = 7"),
+    ] {
+        let text = format!(
+            "struct Root {{ zero: Int = 0, cfg: Map<Str, Int> }}\n\
+             cfg = default({rhs})\n{competitor}\n"
+        );
+        let error = canonical(&text).expect_err(&text);
+        assert!(error.contains("division by zero"), "{error}");
+    }
+}
+
+#[test]
+fn data_keeps_whole_value_priority_for_late_literals() {
+    let text = "struct Root { zero: Int = 0, cfg: Data }\n\
+                cfg = default({ a = 1 / self.zero, b = 3 })\ncfg = { a = 7 }\n";
+    assert_eq!(canonical(text).unwrap(), r#"{"cfg":{"a":7},"zero":0}"#);
+}
+
+#[test]
+fn losing_literal_child_reads_do_not_add_cross_entry_cycles() {
+    let text = "#! entries main.stav overlay.stav\n\
+                #- file main.stav\n\
+                struct Item { a: Int = 0, b: Int = 0 }\n\
+                struct Root { n: Int = 1, seed: Int = 3, cfg: Item = {} }\n\
+                cfg = default({ a = self.n, b = self.seed })\n\
+                #- file overlay.stav\n\
+                n = self.cfg.a\ncfg.a = 7\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"cfg":{"a":7,"b":3},"n":7,"seed":3}"#
+    );
+}
+
+#[test]
+fn winning_literal_child_reads_still_add_cross_entry_cycles() {
+    let text = "#! entries main.stav overlay.stav\n\
+                #- file main.stav\n\
+                struct Item { a: Int = 0, b: Int = 0 }\n\
+                struct Root { n: Int = 1, cfg: Item = {} }\n\
+                cfg = { a = self.n }\n\
+                #- file overlay.stav\nn = self.cfg.a\n";
+    let error = canonical(text).expect_err("the winning child participates in the cycle");
+    assert!(error.contains("E0607"), "{error}");
+}
+
+#[test]
+fn late_literal_children_retain_their_entry_spans_and_priorities() {
+    let evaluated = evaluate(
+        "struct Root { zero: Int = 0, n: Int = 3, cfg: Map<Str, Int> = { a = 1 / self.zero, b = self.n } }\n\
+         cfg.a = 7\n",
+    );
+    assert_eq!(span_texts(&evaluated, "cfg.a"), ["7", "a = 1 / self.zero"]);
+    assert_eq!(span_texts(&evaluated, "cfg.b"), ["b = self.n"]);
+    for (path, priority) in [
+        ("cfg.a", stav::Priority::Plain),
+        ("cfg.b", stav::Priority::Declared),
+    ] {
+        assert_eq!(evaluated.priority(&path.parse().unwrap()), Some(priority));
+    }
+}
+
+#[test]
+fn late_literal_child_conflicts_keep_include_provenance() {
+    let text = "#- file main.stav\n\
+                struct Root { n: Int = 1, cfg: Map<Str, Int> = {} }\n\
+                include \"./other.stav\"\ncfg.a = 2\n\
+                #- file other.stav\ncfg = { a = self.n }\n";
+    let error = canonical(text).expect_err("the two plain values conflict");
+    assert!(error.contains("E0501"), "{error}");
+    assert!(error.contains("app/other.stav:1:9"), "{error}");
+    assert!(error.contains("included from app/main.stav:2:1"), "{error}");
+}
+
+#[test]
+fn losing_literal_children_are_deferred_through_late_bindings() {
+    let text = "struct Root { zero: Int = 0, cfg: Map<Str, Int> }\n\
+                let bad = 1 / self.zero\n\
+                cfg = default({ a = bad, b = self.zero })\ncfg.a = 7\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"cfg":{"a":7,"b":0},"zero":0}"#
+    );
+}
+
+#[test]
+fn late_declared_literal_defaults_keep_each_instances_self_frame() {
+    let text = "struct Item { n: Int, cfg: Map<Str, Int> = { a = 1 / self.n, b = self.n } }\n\
+                struct Root { items: Map<Str, Item> = {} block item }\n\
+                item first { n = 0, cfg.a = 7 }\n\
+                item second { n = 2, cfg.a = 8 }\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"items":{"first":{"cfg":{"a":7,"b":0},"n":0},"second":{"cfg":{"a":8,"b":2},"n":2}}}"#
+    );
+}

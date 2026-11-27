@@ -257,7 +257,68 @@ A contribution that loses the merge adds no dependency either. When an overlay s
 
 ## How it fits with eager evaluation
 
-Late binding is narrow on purpose. Everything that decides the shape of the value, such as conditions, loops, labels and includes, is evaluated eagerly and cannot read `self`. So the set of contributions is fixed before merging, and only the values of some attributes wait for it. Each late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Evaluation still always terminates.
+Late binding is narrow on purpose. Everything that decides the shape of the value, such as conditions, loops, labels and includes, is evaluated eagerly and cannot read `self`. So the set of contributions is fixed before merging, and only the values of some attributes wait for it. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Evaluation still always terminates.
+
+Priorities are decided before deferred values run. A losing deferred value is not evaluated. Struct and map literals split recursively into contributions for each field or key, so only the winning late children run. Eager children still run when the literal is collected, even if another child reads `self`.
+
+<!-- file: deferred-winners.stav -->
+
+```stav
+struct Settings {
+  a: Int
+  b: Int
+}
+
+struct Root {
+  zero: Int = 0
+  x:    Int
+  cfg:  Settings
+}
+
+x = default(1 / self.zero)
+x = 7
+
+cfg   = default({ a = 1 / self.zero, b = self.zero })
+cfg.a = 7
+```
+
+<!-- run: eval deferred-winners.stav -->
+
+```json
+{
+  "zero": 0,
+  "x": 7,
+  "cfg": {
+    "a": 7,
+    "b": 0
+  }
+}
+```
+
+Both divisions in this program read `self`, and both lose to `7`. The sibling `b` still contributes its final value. Removing `self` from the division makes it eager. It then reports an error even though `cfg.a` has a higher priority contribution:
+
+<!-- file: eager-loser.stav -->
+
+```stav
+struct Root {
+  zero: Int = 0
+  cfg:  Map<Str, Int>
+}
+
+cfg   = default({ a = 1 / 0, b = self.zero })
+cfg.a = 7
+```
+
+<!-- run: eval eager-loser.stav -->
+
+```text
+error[E0603]: division by zero
+  ┌─ eager-loser.stav:6:25
+  │
+6 │ cfg   = default({ a = 1 / 0, b = self.zero })
+  │                         ^
+
+```
 
 ## Next
 
