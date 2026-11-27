@@ -1,0 +1,7 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0605]: the key `same` is given more than once
+  --> app/main.stav:4:24

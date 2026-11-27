@@ -1,0 +1,5 @@
+struct S { m: Map<Str, Int> }
+struct Root { x: Int = 0, missing: S = { m = { a = 1 } }, supplied: S = { m = { a = 1 } } }
+fn mk(x: Int) -> Map<Str, Int> = if x == 0 { {} } else { { a = 2 } }
+missing.m  = mk(self.x)
+supplied.m = mk(self.x + 1)
