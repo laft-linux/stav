@@ -1,0 +1,7 @@
+struct Item { value: Int = 0 }
+struct Root {
+  left: Map<Str, Item> = {} block item
+  right: Map<Str, Item> = {} block item
+}
+
+item demo { value = 1 }

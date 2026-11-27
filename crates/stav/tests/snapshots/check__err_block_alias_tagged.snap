@@ -1,0 +1,17 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0443]: block name `item` is used by more than one field in `Tagged`
+  --> app/main.stav:5:3
+  label: app/main.stav:4:3: first field using this name
+  help: rename the block alias or the conflicting field
+error[E0443]: block name `item` is used by more than one field in `TaggedThenMap`
+  --> app/main.stav:9:3
+  label: app/main.stav:8:3: first field using this name
+  help: rename the block alias or the conflicting field
+error[E0443]: block name `item` is used by more than one field in `MapThenTagged`
+  --> app/main.stav:13:3
+  label: app/main.stav:12:3: first field using this name
+  help: rename the block alias or the conflicting field

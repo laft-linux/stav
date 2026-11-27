@@ -1,0 +1,31 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "left": {
+    "items": {
+      "demo": {
+        "value": 1
+      }
+    },
+    "choice": {
+      "one": {
+        "value": 2
+      }
+    }
+  },
+  "right": {
+    "item": {
+      "demo": {
+        "value": 3
+      }
+    },
+    "selected": {
+      "one": {
+        "value": 4
+      }
+    }
+  }
+}

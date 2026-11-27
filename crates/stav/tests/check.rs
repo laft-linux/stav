@@ -721,3 +721,69 @@ fn map_literal_key_restriction_preserves_self_reads_in_values() {
                 m = { fixed = self.key, \"constant\" = self.key }\n";
     assert!(!run(text).starts_with("--- errors"));
 }
+
+#[test]
+fn block_names_are_unique_per_struct() {
+    let cases = [
+        (
+            "left: Map<Str, Item> = {} block item",
+            "right: Map<Str, Item> = {} block item",
+        ),
+        (
+            "left: Choice = one() block item",
+            "right: Choice = one() block item",
+        ),
+        (
+            "left: Choice = one() block item",
+            "right: Map<Str, Item> = {} block item",
+        ),
+        (
+            "left: Map<Str, Item> = {} block item",
+            "right: Choice = one() block item",
+        ),
+        ("left: Map<Str, Item> = {} block right", "right: Int = 0"),
+        ("left: Int = 0", "right: Map<Str, Item> = {} block left"),
+        ("left: Choice = one() block right", "right: Item = {}"),
+        ("left: Item = {}", "right: Choice = one() block left"),
+    ];
+    let mut failures = Vec::new();
+    for (first, second) in cases {
+        let text = format!(
+            "struct Item {{ value: Int = 0 }}\ntype Choice = one(value: Int = 0) | two\nstruct Root {{\n  {first}\n  {second}\n}}\n"
+        );
+        let fixture = fixture(&text);
+        let Err(diagnostics) = check(&fixture.host, &fixture.root) else {
+            failures.push(format!("accepted conflicting fields: {first}, {second}"));
+            continue;
+        };
+        let errors: Vec<_> = diagnostics.iter().collect();
+        if errors.len() != 1 || errors[0].diagnostic.code != "E0443" {
+            failures.push(format!("{first}, {second}:\n{diagnostics}"));
+            continue;
+        }
+        let error = &errors[0].diagnostic;
+        assert_eq!(&text[error.span.range()], "right");
+        assert_eq!(error.labels.len(), 1);
+        assert_eq!(&text[error.labels[0].span.range()], "left");
+        assert!(error.labels[0].file.is_none());
+        assert!(error.help.is_some());
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn invalid_block_field_types_keep_their_code() {
+    let fixture = fixture("struct Root { count: Int = 0 block counter }\n");
+    let Err(diagnostics) = check(&fixture.host, &fixture.root) else {
+        panic!("a block clause on an integer must fail");
+    };
+    let errors: Vec<_> = diagnostics.iter().collect();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].diagnostic.code, "E0443");
+    assert!(
+        errors[0]
+            .diagnostic
+            .message
+            .contains("map of structs or a sum type")
+    );
+}

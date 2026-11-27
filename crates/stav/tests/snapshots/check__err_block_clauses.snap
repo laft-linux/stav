@@ -3,9 +3,10 @@ source: crates/stav/tests/check.rs
 expression: output
 ---
 --- errors
-error[E0306]: block kind `step` is declared more than once in `Root`
+error[E0443]: block name `step` is used by more than one field in `Root`
   --> app/main.stav:4:3
-  label: app/main.stav:3:3: first declared here
+  label: app/main.stav:3:3: first field using this name
+  help: rename the block alias or the conflicting field
 error[E0443]: a `block` clause needs a map of structs or a sum type, not `Int`
   --> app/main.stav:5:3
   help: declare the field as `Map<Str, T>` with a struct `T`

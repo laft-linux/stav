@@ -491,7 +491,7 @@ A block statement `kind label { body }` or `kind { body }` in a body of the stru
 4. **Tagged block.** `S` has a field named `kind`, or a field with `block kind`, whose type is a sum type. The label must name a variant of that type ([E0439](/reference/error-codes#e0439)), and the attributes of the body are the payload fields of that variant, as in `build native { features = ["simd"] }`.
 5. Otherwise the block is [E0440](/reference/error-codes#e0440), with a suggestion for the closest block kind.
 
-A `block` clause belongs on a map of structs or on a sum type ([E0443](/reference/error-codes#e0443)), and one struct cannot declare the same block kind twice ([E0306](/reference/error-codes#e0306)). A label is an identifier or a string literal. A string label may interpolate, but not read `self`.
+A `block` clause belongs on a map of structs or on a sum type ([E0443](/reference/error-codes#e0443)). Within a struct, field names and `block` aliases share one namespace. An alias cannot duplicate another field's alias or name, regardless of declaration order or field type ([E0443](/reference/error-codes#e0443)). An alias may equal its own field's name, and distinct structs may reuse aliases. A label is an identifier or a string literal. A string label may interpolate, but not read `self`.
 
 A tagged block selects its variant and contributes each payload field separately, so several blocks with the same label merge field by field. How selections and payloads merge is described on the [merging](/reference/merging) page.
 

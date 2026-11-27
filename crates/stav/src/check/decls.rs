@@ -1329,23 +1329,30 @@ impl<'p> Checker<'p> {
         for s in &self.types.structs {
             let mut kinds: BTreeMap<&str, Span> = BTreeMap::new();
             for field in &s.fields {
-                let Some(kind) = &field.block else { continue };
-                if let Some(&first) = kinds.get(kind.as_str()) {
-                    errors.push((
-                        s.file,
-                        Diagnostic::error(
-                            "E0306",
-                            field.span,
-                            format!(
-                                "block kind `{kind}` is declared more than once in `{}`",
-                                s.name
-                            ),
-                        )
-                        .with_label(None, first, "first declared here"),
-                    ));
+                for kind in std::iter::once(field.name.as_str())
+                    .chain(field.block.as_deref().filter(|&kind| kind != field.name))
+                {
+                    if let Some(&first) = kinds.get(kind) {
+                        errors.push((
+                            s.file,
+                            Diagnostic::error(
+                                "E0443",
+                                field.span,
+                                format!(
+                                    "block name `{kind}` is used by more than one field in `{}`",
+                                    s.name
+                                ),
+                            )
+                            .with_label(None, first, "first field using this name")
+                            .with_help("rename the block alias or the conflicting field"),
+                        ));
+                    } else {
+                        kinds.insert(kind, field.span);
+                    }
+                }
+                if field.block.is_none() {
                     continue;
                 }
-                kinds.insert(kind, field.span);
                 let ty = self.types.peel(field.ty);
                 let valid = match self.types.get(ty) {
                     Type::Map(_, v) => {

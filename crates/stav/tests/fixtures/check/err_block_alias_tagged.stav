@@ -1,0 +1,15 @@
+struct Item { value: Int = 0 }
+type Choice = one(value: Int = 0) | two
+struct Tagged {
+  left: Choice = one() block item
+  right: Choice = one() block item
+}
+struct TaggedThenMap {
+  left: Choice = one() block item
+  right: Map<Str, Item> = {} block item
+}
+struct MapThenTagged {
+  left: Map<Str, Item> = {} block item
+  right: Choice = one() block item
+}
+struct Root { value: Int = 0 }

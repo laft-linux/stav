@@ -1,0 +1,23 @@
+struct Item { value: Int = 0 }
+type Choice = one(value: Int = 0) | two
+struct Left {
+  items: Map<Str, Item> = {} block item
+  choice: Choice = one() block choice
+}
+struct Right {
+  item: Map<Str, Item> = {} block item
+  selected: Choice = one() block choice
+}
+struct Root {
+  left: Left = {}
+  right: Right = {}
+}
+
+left {
+  item demo { value = 1 }
+  choice one { value = 2 }
+}
+right {
+  item demo { value = 3 }
+  choice one { value = 4 }
+}

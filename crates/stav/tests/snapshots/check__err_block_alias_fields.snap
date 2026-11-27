@@ -1,0 +1,21 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0443]: block name `right` is used by more than one field in `AliasFirst`
+  --> app/main.stav:5:3
+  label: app/main.stav:4:3: first field using this name
+  help: rename the block alias or the conflicting field
+error[E0443]: block name `left` is used by more than one field in `FieldFirst`
+  --> app/main.stav:9:3
+  label: app/main.stav:8:3: first field using this name
+  help: rename the block alias or the conflicting field
+error[E0443]: block name `right` is used by more than one field in `TaggedAliasFirst`
+  --> app/main.stav:13:3
+  label: app/main.stav:12:3: first field using this name
+  help: rename the block alias or the conflicting field
+error[E0443]: block name `left` is used by more than one field in `TaggedFieldFirst`
+  --> app/main.stav:17:3
+  label: app/main.stav:16:3: first field using this name
+  help: rename the block alias or the conflicting field

@@ -77,7 +77,7 @@ The first digits of a code name the area it belongs to.
 | [E0440](#e0440) | an unknown block kind |
 | [E0441](#e0441) | `default` or `force` inside an expression |
 | [E0442](#e0442) | a part included into a body of another struct |
-| [E0443](#e0443) | a `block` clause on a field of the wrong type |
+| [E0443](#e0443) | an invalid `block` clause or a block name shared by fields |
 | [E0444](#e0444) | wrong arguments in a call or a type |
 | [E0501](#e0501) | conflicting values at equal priority |
 | [E0502](#e0502) | tagged blocks that select different variants |
@@ -1516,7 +1516,7 @@ Include the part into a body of its own struct, or change its type.
 
 ### E0443
 
-A field has a `block` clause, but its type is neither a map of structs nor a sum type.
+A field has a `block` clause, but its type is neither a map of structs nor a sum type, or its block alias conflicts with another field's alias or name in the same struct. Field names and block aliases share one namespace, regardless of declaration order or field type. An alias may equal its own field's name, and distinct structs may reuse aliases.
 
 <!-- file: e0443.stav -->
 
@@ -1537,6 +1537,36 @@ error[E0443]: a `block` clause needs a map of structs or a sum type, not `Int`
 ```
 
 Give the field a type such as `Map<Str, Counter>`, or remove the clause.
+
+Two fields cannot use the same block alias:
+
+<!-- file: e0443-alias.stav -->
+
+```stav
+struct Item { value: Int = 0 }
+struct Root {
+  left:  Map<Str, Item> = {} block item
+  right: Map<Str, Item> = {} block item
+}
+
+item demo { value = 1 }
+```
+
+<!-- run: check e0443-alias.stav -->
+
+```text
+error[E0443]: block name `item` is used by more than one field in `Root`
+  ┌─ e0443-alias.stav:4:3
+  │
+3 │   left:  Map<Str, Item> = {} block item
+  │   ---- first field using this name
+4 │   right: Map<Str, Item> = {} block item
+  │   ^^^^^
+  │
+  = help: rename the block alias or the conflicting field
+```
+
+Rename one alias, or rename the other field if the alias conflicts with its name. Both field declarations are identified in the diagnostic.
 
 ### E0444
 

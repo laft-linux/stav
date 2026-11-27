@@ -1,0 +1,19 @@
+struct Item { value: Int = 0 }
+type Choice = one(value: Int = 0) | two
+struct AliasFirst {
+  left: Map<Str, Item> = {} block right
+  right: Int = 0
+}
+struct FieldFirst {
+  left: Int = 0
+  right: Map<Str, Item> = {} block left
+}
+struct TaggedAliasFirst {
+  left: Choice = one() block right
+  right: Item = {}
+}
+struct TaggedFieldFirst {
+  left: Item = {}
+  right: Choice = one() block left
+}
+struct Root { value: Int = 0 }
