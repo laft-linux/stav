@@ -168,7 +168,9 @@ error[E0703]: imports and part files form a cycle
 
 An attribute computed from `self` is evaluated after the attributes it reads. Two attributes that read each other would leave both undefined. The checker reports a cycle within one body as the provisional warning [`W0607`](/reference/error-codes#w0607), without rejecting the program. Another entry or included part can override an edge with a constant and break the cycle. After merging, the evaluator checks every contribution the merge may evaluate in each block instance, before resolving its late values. This includes lower whole values whose paths are not covered and declared defaults that may fill instances created by higher contributions. A cycle that survives is the error [`E0607`](/reference/error-codes#e0607). Dependencies from distinct instances are never combined. [Cycles](/guide/self#cycles) explains both checks.
 
-In a [struct value built by an expression](/guide/self#defaults-in-constructed-values), each omitted default runs at most once per construction, and reading a default that is still running stops with E0607.
+The static instance check also covers struct instances created by computed-key entries of participating default literals, recursively, without evaluating their keys. It uses placeholder paths `P.m.#i`, numbered from zero among the computed entries of the literal, with per-child literal and declared-default nodes, containment edges and dependencies. Reads written in the entry's value still start at the map field. A cycle among the placeholder's defaults is E0607 citing its dependency edges before any deferred value runs, regardless of an enclosing whole value's result. [Computed keys and cycles](/guide/self#computed-keys-in-declared-defaults) shows an example.
+
+Opaque [struct values built by expressions](/guide/self#defaults-in-constructed-values), such as function results or list elements, retain a separate construction-time guard. Each omitted default runs at most once per construction, and reading a default that is still running stops with E0607.
 
 <!-- file: selfcycle.stav -->
 
@@ -240,7 +242,7 @@ Take any program that passes these checks. Because the call graph is acyclic, ev
 
 A lambda could only call itself if it received itself as an argument, and the type of such a parameter would have to contain itself. Types cannot, so no lambda can reach itself. The only repetition left is iteration, which runs a fixed number of times over collections that already exist. Each expression thus reaches a value in a finite number of steps.
 
-Statements add a finite amount of work each. A `for` runs once per element. Imports and includes unfold finitely, because their graphs are acyclic. Merging processes finitely many contributions. Before resolving late values, merging checks the dependencies of every contribution it may evaluate and rejects any cycle. Each participating deferred `self` value then runs at most once in that acyclic dependency order. Defaults of expression-built structs also terminate: each omitted field is computed at most once, and a read of a default that is still running stops with E0607. The whole evaluation therefore ends.
+Statements add a finite amount of work each. A `for` runs once per element. Imports and includes unfold finitely, because their graphs are acyclic. Merging processes finitely many contributions. Before resolving late values, merging checks the dependencies of every contribution it may evaluate and rejects any cycle, including cycles in placeholder instances created by computed-key entries of participating default literals. Each participating deferred `self` value then runs at most once in that acyclic dependency order. Defaults of expression-built structs also terminate: each omitted field is computed at most once, and a read of a default that is still running stops with E0607. The whole evaluation therefore ends.
 
 ## Bounded iteration
 

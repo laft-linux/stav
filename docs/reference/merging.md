@@ -151,7 +151,7 @@ settings = { a = 3, b = 4 }
 
 ## Declared defaults
 
-Every declared struct or payload field default is evaluated only when it fills a field, and at most once per field it fills. This applies even without `self` and outside late whole values. A losing default never runs, so it cannot fail:
+Every declared struct or payload field default is evaluated only when it may fill a field, and at most once per field it fills. Whether it may is decided statically from contributions, before any deferred value runs. This applies even without `self` and outside late whole values. A default that loses to another contribution at its own path never runs, so it cannot fail:
 
 <!-- file: declared-losers.stav -->
 
@@ -177,7 +177,56 @@ m.b.x = 7
 }
 ```
 
-Defaults without `self` reuse their first result across instances within one evaluation. Defaults that read `self` use the fields of their own instance. A literal default splits recursively into field and literal-key contributions, so a covered child can remain unevaluated while a sibling still fills its field. Computed map keys remain unknown during cycle checking and are evaluated only when their default participates. The reads in each computed-key entry's value belong to the map field itself, not to a child path. [Computed keys and cycles](/guide/self#computed-keys-in-declared-defaults) explains the conservative graph this produces. Other expressions remain whole: when a constructor default participates, its arguments are evaluated normally.
+Defaults without `self` reuse their first result across instances within one evaluation. Defaults that read `self` use the fields of their own instance. A literal default splits recursively into field and literal-key contributions, so a covered child can remain unevaluated while a sibling still fills its field. Computed map keys remain unknown during cycle checking and are evaluated only when their default participates. The `self` reads written in each computed-key entry's value belong to the map field itself, not to a child path. Struct instances created by the entry get placeholder paths with their own literal-field and declared-default dependencies, recursively, whenever the literal's edges participate. [Computed keys and cycles](/guide/self#computed-keys-in-declared-defaults) explains this conservative graph. Other expressions remain whole: when a constructor default participates, its arguments are evaluated normally.
+
+A whole declared default of a struct, a sum with a payload variant, an `Option`, a map or `Data` runs unless higher contributions [cover its path](#late-whole-values), whether or not it reads `self`. A higher tagged-block selection does not cover a payload sum: the default may supply the matching payload's omitted fields. Its constructor therefore runs even if it produces a different variant whose payload is discarded, and it may fail:
+
+<!-- file: declared-sum-error.stav -->
+
+```stav
+type Build = cargo(n: Int = 1, kept: Int = 4) | meson(o: Int = 0)
+
+struct Root { build: Build = meson(o = 1 / 0) }
+
+build cargo { n = 7 }
+```
+
+<!-- run: eval declared-sum-error.stav -->
+
+```text
+error[E0603]: division by zero
+  ┌─ declared-sum-error.stav:3:42
+  │
+3 │ struct Root { build: Build = meson(o = 1 / 0) }
+  │                                          ^
+```
+
+This reports E0603 from the default's constructor, despite the higher selection of `cargo`. A matching default supplies the payload field that the block leaves out:
+
+<!-- file: declared-sum-payload.stav -->
+
+```stav
+type Build = cargo(n: Int = 1, kept: Int = 4) | meson(o: Int = 0)
+
+struct Root { build: Build = cargo(kept = 5) }
+
+build cargo { n = 7 }
+```
+
+<!-- run: eval declared-sum-payload.stav -->
+
+```json
+{
+  "build": {
+    "cargo": {
+      "n": 7,
+      "kept": 5
+    }
+  }
+}
+```
+
+The result is `cargo` with `n = 7` and `kept = 5`. A higher whole attribute contribution of the sum covers the path instead and suppresses the lower default.
 
 An attribute statement such as `x = default(1 / 0)` is not a declared default. It still runs eagerly and fails even when a later `x = 7` wins. The [`self` guide](/guide/self#how-it-fits-with-eager-evaluation) contrasts eager statements with deferred values.
 
@@ -302,7 +351,7 @@ The declared default `["declared"]` of `tags` is not part of the result, because
 
 ### Structs, maps and literals
 
-Structs merge field by field and maps merge key by key. A struct or map literal on the right side of an attribute contributes each field or key it sets, at the priority of the statement. This splitting is recursive, including when a literal reads `self` or appears in a declared field default. Each statically known child records only its own reads. In declared defaults, a computed-key entry instead records its value's reads at the map field until its key is evaluated at runtime. Only participating children of a declared default run. In a statement literal, only winning deferred children run, while eager children run before merging. A lower priority literal can therefore lose one child and still supply its siblings. Fields it leaves out contribute nothing. That is why a literal, an attribute path and a block can all add to the same value:
+Structs merge field by field and maps merge key by key. A struct or map literal on the right side of an attribute contributes each field or key it sets, at the priority of the statement. This splitting is recursive, including when a literal reads `self` or appears in a declared field default. Each statically known child records only its own reads. In declared defaults, a computed-key entry instead records the `self` reads written in its value at the map field. Struct instances the entry creates also get placeholder paths with their own dependencies, recursively, without evaluating the key. Only participating children of a declared default run. In a statement literal, only winning deferred children run, while eager children run before merging. A lower priority literal can therefore lose one child and still supply its siblings. Fields it leaves out contribute nothing. That is why a literal, an attribute path and a block can all add to the same value:
 
 <!-- file: literals.stav -->
 
@@ -365,7 +414,7 @@ A late whole value **has** the paths that exist in its value. A struct is comple
 2. Whole values that supply the path, with the higher one first.
 3. Declared defaults, but only in an instance that no whole value supplies.
 
-A higher contribution can create a map entry absent from every whole value, an option value where the whole values return `none`, or a selected variant's payload when none of the whole values has that variant. These instances take their fields from the higher contributions and then from declared defaults, recursively through struct fields. The same rule applies inside a whole struct, not just at the whole value's own path. A default runs only when it fills a field. A field in an instance that a whole value supplies keeps the whole value's field instead, even if its constructor computed that field from a default.
+A higher contribution can create a map entry absent from every whole value, an option value where the whole values return `none`, or a selected variant's payload when none of the whole values has that variant. These instances take their fields from the higher contributions and then from declared defaults, recursively through struct fields. The same rule applies inside a whole struct, not just at the whole value's own path. A default runs only when it may fill a field, as decided statically from contributions. It can run without supplying a final field if its whole value is not covered. A field in an instance that a whole value supplies keeps the whole value's field instead, even if its constructor computed that field from a default.
 
 This example creates a missing map entry inside a whole struct:
 
@@ -443,7 +492,7 @@ Here `cfg.download` is present and its default `url` uses version `2`. Returning
 
 A higher late whole struct, sum, `Data` or `Option` replaces lower whole values throughout its path, even when it returns `none` or a different variant. A higher whole map replaces lower values only beneath its own keys. Several late whole values can therefore supply the same map. For example, `s = default(a(self.x))` and `s.m = b(self.y)` merge the maps at `s.m`: `b` wins shared keys, and keys only in `a` survive. A higher whole struct is complete, so a lower whole value supplies nothing inside that struct.
 
-A late whole value runs unless higher contributions **cover** its own path. Coverage is decided statically:
+A late whole value runs unless higher contributions **cover** its own path. The same coverage rules apply to whole declared defaults, whether or not they read `self`. Coverage is decided statically:
 
 | Path type | What covers it |
 |---|---|

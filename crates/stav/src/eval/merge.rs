@@ -855,8 +855,9 @@ impl<'c> Eval<'c> {
 
     /// Whether higher contributions, including supplied whole-value parts,
     /// determine every part of `n`. Four priority slots make each node's
-    /// recursive coverage scan run once per unchanged set of higher contributions. Mutations invalidate only affected nodes
-    /// and ancestors, never value memoization or winner selection.
+    /// recursive coverage scan run once per unchanged set of higher contributions.
+    /// Mutations invalidate only affected nodes and ancestors, never value
+    /// memoization or winner selection.
     fn covered(&self, n: NodeId, priority: Prio) -> bool {
         if let Some(found) = self.merge.node(n).coverage.get()[priority as usize] {
             return found;

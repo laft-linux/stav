@@ -172,7 +172,7 @@ error[E0607]: the defaults of `S` read each other through `self` in a cycle
   │      ---- in this call of `mk`
 ```
 
-The merged-instance dependency graph does not inspect these expression-built values. Their defaults are checked for cycles during construction. Every omitted default runs at most once per construction, and all fields are complete before the constructed value is returned. This preserves eager evaluation while ensuring that reads among a construction's defaults cannot loop.
+Opaque expression-built values, such as function results and list elements, are not inspected by the merged-instance dependency graph. They retain a separate construction-time cycle guard. This is distinct from the static check of instances created by participating default literals, including computed-key entries. Every omitted default runs at most once per construction, and all fields are complete before the constructed value is returned. This preserves eager evaluation while ensuring that reads among a construction's defaults cannot loop.
 
 ## `let` bindings that read `self`
 
@@ -423,7 +423,9 @@ A higher constant contribution to either field removes its losing default and br
 
 ### Computed keys in declared defaults
 
-The final dependency check never evaluates a map key in a declared default. A literal key gives the check a known child path. An entry whose key is not a string literal instead belongs to the map field: all `self` reads in that entry's value start at the map node, and the check creates no child node for that entry. This applies both with and without an enclosing late whole value.
+The final dependency check never evaluates a map key in a declared default. A literal key gives the check a known child path. When the key is computed, the check creates no node for that key. The `self` reads written in the entry's value start at the map field instead.
+
+Struct instances created by a computed-key entry still have their own nodes. For a map field `P.m`, the entry gets the placeholder instance `P.m.#i`, where `i` is its zero-based position among the computed entries of that literal. Whenever the default literal's edges participate, the placeholder gets the same per-child literal contributions, declared-default nodes, containment edges and dependency edges as an instance at a literal key. This applies recursively to instances inside it, both with and without an enclosing late whole value. The check does not use the eventual key or the whole value's result to remove these edges.
 
 This conservative graph can reject a program that would pass with a literal key:
 
@@ -462,11 +464,45 @@ error[E0607]: `self` dependencies form a cycle
 
 The graph has both `box.n -> box.m` and `box.m -> box.n`, even though `box.m.x.a` is forced. Writing the key as the literal `x` removes the covered child's dependency and accepts the program with `box.n = 2`. To retain a computed key without this approximation, contribute the entry with a statement instead. A losing default never evaluates its key, so even a key such as `"#{1 / 0}"` cannot fail when the default is unused.
 
+A computed-key entry cannot hide a cycle among the defaults of the instance it creates:
+
+<!-- file: computed-instance-cycle.stav -->
+
+```stav
+struct P { a: Int = self.b, b: Int = self.a, c: Int = 0 }
+
+fn key() -> Str = "x"
+
+struct W { m: Map<Str, P> = { "#{key()}" = { c = 1 } } }
+
+fn mk(k: Int) -> Map<Str, P> = {}
+
+struct Root { k: Int = 0, w: W }
+
+w.m = mk(self.k)
+```
+
+<!-- run: eval computed-instance-cycle.stav -->
+
+```text
+error[E0607]: `self` dependencies form a cycle
+  ┌─ computed-instance-cycle.stav:1:21
+  │
+1 │ struct P { a: Int = self.b, b: Int = self.a, c: Int = 0 }
+  │                     ^^^^^^           ------ `w.m.#0.b` reads `w.m.#0.a`
+  │                     │                 
+  │                     `w.m.#0.a` reads `w.m.#0.b`
+  │
+  = note: cycle: w.m.#0.a -> w.m.#0.b -> w.m.#0.a
+```
+
+The static E0607 cites both `w.m.#0.a -> w.m.#0.b` and `w.m.#0.b -> w.m.#0.a`, before `mk` runs. Returning `{ x = P { a = 1 } }` from `mk` does not change that rejection. Without any whole contribution, a root field `m: Map<Str, P> = { "#{key()}" = { c = 1 } }` also reports static E0607 with both `m.#0.a -> m.#0.b` and `m.#0.b -> m.#0.a`.
+
 ## How it fits with eager evaluation
 
-Late binding is narrow on purpose. Statement conditions, loop collections, labels and includes are evaluated eagerly and cannot read `self`. Declared defaults, including their computed map keys, wait until they participate. The dependency check never evaluates those keys and conservatively records their entries at the map field instead. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Potential declared-default fallbacks below late whole values are included in that graph before their use is known. Evaluation still always terminates.
+Late binding is narrow on purpose. Statement conditions, loop collections, labels and includes are evaluated eagerly and cannot read `self`. Declared defaults, including their computed map keys, wait until they participate. The dependency check never evaluates those keys. It records the `self` reads written in their values at the map field and checks the defaults of instances they create at placeholder paths, recursively. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Potential declared-default fallbacks below late whole values are included in that graph before their use is known. Evaluation still always terminates.
 
-Priorities are decided before deferred values run. A losing deferred value is not evaluated. Every declared field or payload default also waits until it fills a field, whether or not it reads `self`, and runs at most once per field it fills. A losing declared default never runs. [Declared defaults](/reference/merging#declared-defaults) shows examples without `self`. Struct and map literals split recursively into contributions for each field or key, so only the winning late children run. In statement literals, eager children still run when the literal is collected, even if another child reads `self`. Children of declared default literals wait until they participate.
+Priorities are decided before deferred values run. A losing deferred value is not evaluated. Every declared field or payload default also waits until it may fill a field, decided statically from contributions before any deferred value runs, and runs at most once per field it fills. A default that loses at its own path never runs. A whole declared default of a struct, a sum with a payload variant, an `Option`, a map or `Data` runs unless higher contributions cover its path, whether or not it reads `self`. A tagged-block selection does not cover a payload sum, so a constructor for a discarded variant may still run and fail. [Declared defaults](/reference/merging#declared-defaults) shows examples without `self`. Struct and map literals split recursively into contributions for each field or key, so only the winning late children run. In statement literals, eager children still run when the literal is collected, even if another child reads `self`. Children of declared default literals wait until they participate.
 
 <!-- file: deferred-winners.stav -->
 

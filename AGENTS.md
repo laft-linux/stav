@@ -9,7 +9,7 @@ These properties define Stav. A change that breaks one is a bug, even when every
 - **Total.** Evaluation of a well-typed program always terminates. Functions cannot call themselves directly or indirectly, types cannot be recursive, iteration runs only over finite collections, and `self` dependencies are acyclic. Fuel limits turn large but finite evaluations into errors. Nothing may ever hang.
 - **Pure and deterministic.** Evaluation never reads environment variables, the clock, the network, randomness or files, except files the host serves through its loader. The same inputs produce the same value, byte for byte. Hash map iteration order must never reach output, diagnostics or merge order.
 - **Static.** A whole program is type checked before anything is evaluated.
-- **Eager.** Statements are evaluated eagerly and in order. Declared defaults run only when they fill a field. Late-bound `self` is resolved after merging.
+- **Eager.** Statements are evaluated eagerly and in order. Declared defaults run only when they may fill a field, decided statically from contributions, and at most once per field they fill. Whole defaults run unless higher contributions cover their paths, whether or not they read `self`. A default that loses at its own path never runs. Late-bound `self` is resolved after merging.
 - **Domain agnostic.** The `stav` crate knows nothing about any application that embeds it. Domain concepts enter only through the host interface: prelude, std catalog, symbol types, host modules, implicit parts, implicit reference targets and host validation.
 - **No panics.** Any byte sequence given to the lexer, parser, checker or evaluator produces either a value or diagnostics, never a panic.
 
