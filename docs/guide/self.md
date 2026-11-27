@@ -186,7 +186,7 @@ error[E0606]: `self` cannot be used in an `if` condition
 
 ## Cycles
 
-A late value can read another late value, but the reads must not go around in a circle, or neither value could ever be computed. Stav checks this twice. While type checking, it rejects a cycle that exists inside one body whatever else is merged into it:
+A late value can read another late value, but the reads must not go around in a circle, or neither value could ever be computed. Stav checks this in two stages. While type checking, a cycle inside one body produces the provisional warning `W0607`. Checking still succeeds because another contribution can override an edge during merging:
 
 <!-- file: cycle.stav -->
 
@@ -203,7 +203,7 @@ tag     = "v#{self.version}"
 <!-- run: check cycle.stav -->
 
 ```text
-error[E0607]: `self` dependencies form a cycle
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
   ┌─ cycle.stav:6:11
   │
 6 │ version = "#{self.tag}"
@@ -214,9 +214,84 @@ error[E0607]: `self` dependencies form a cycle
   │           ------------------ `Root.tag` reads `Root.version`
   │
   = note: cycle: Root.version -> Root.tag -> Root.version
+  = help: set one of the attributes without `self` at a higher priority
 ```
 
-After merging, it checks again, precisely. The final check looks at block instances, not at types, and only at the contributions that won the merge. Two instances of the same struct may therefore derive their fields in opposite directions:
+If both edges win the merge, evaluation fails with `E0607`. This authoritative check uses only winning contributions of each block instance, before resolving its late values:
+
+<!-- run: eval cycle.stav -->
+
+```text
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+  ┌─ cycle.stav:6:11
+  │
+6 │ version = "#{self.tag}"
+  │           ^^^^^^^^^^^^^
+  │           │
+  │           `Root.version` reads `Root.tag`
+7 │ tag     = "v#{self.version}"
+  │           ------------------ `Root.tag` reads `Root.version`
+  │
+  = note: cycle: Root.version -> Root.tag -> Root.version
+  = help: set one of the attributes without `self` at a higher priority
+
+error[E0607]: `self` dependencies form a cycle
+  ┌─ cycle.stav:6:11
+  │
+6 │ version = "#{self.tag}"
+  │           ^^^^^^^^^^^^^
+  │           │
+  │           `version` reads `tag`
+7 │ tag     = "v#{self.version}"
+  │           ------------------ `tag` reads `version`
+  │
+  = note: cycle: version -> tag -> version
+```
+
+An overlay can break the same body-local cycle by forcing `tag` to a constant. The warning remains, but the winning graph is acyclic and evaluation succeeds:
+
+<!-- file: cycle-forced.stav -->
+
+```stav
+struct Root {
+  version: Str = ""
+  tag:     Str = ""
+}
+
+version = "#{self.tag}"
+tag     = "v#{self.version}"
+
+include "./cycle-overlay.stav"
+```
+
+<!-- file: cycle-overlay.stav -->
+
+```stav
+tag = force("v1.0")
+```
+
+<!-- run: eval cycle-forced.stav -->
+
+```text
+{
+  "version": "v1.0",
+  "tag": "v1.0"
+}
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+  ┌─ cycle-forced.stav:6:11
+  │
+6 │ version = "#{self.tag}"
+  │           ^^^^^^^^^^^^^
+  │           │
+  │           `Root.version` reads `Root.tag`
+7 │ tag     = "v#{self.version}"
+  │           ------------------ `Root.tag` reads `Root.version`
+  │
+  = note: cycle: Root.version -> Root.tag -> Root.version
+  = help: set one of the attributes without `self` at a higher priority
+```
+
+The final check looks at block instances, not at types. Two instances of the same struct may therefore derive their fields in opposite directions:
 
 <!-- file: instances.stav -->
 

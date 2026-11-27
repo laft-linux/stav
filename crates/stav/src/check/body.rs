@@ -451,8 +451,13 @@ impl<'p> Checker<'p> {
                 };
                 let message = format!("`{}` reads `{}`", graph.labels[from], graph.labels[to]);
                 diagnostic = Some(match diagnostic {
-                    None => Diagnostic::error("E0607", span, "`self` dependencies form a cycle")
-                        .with_label(None, span, message),
+                    None => Diagnostic::warning(
+                        "W0607",
+                        span,
+                        "`self` dependencies may form a cycle unless merging overrides an edge",
+                    )
+                    .with_label(None, span, message)
+                    .with_help("set one of the attributes without `self` at a higher priority"),
                     Some(d) => d.with_label(None, span, message),
                 });
             }

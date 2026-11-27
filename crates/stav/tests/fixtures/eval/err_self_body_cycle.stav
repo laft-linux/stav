@@ -1,0 +1,7 @@
+struct Root {
+  version: Str
+  tag:     Str
+}
+
+version = "#{self.tag}"
+tag     = "v#{self.version}"

@@ -1435,3 +1435,118 @@ fn late_declared_literal_defaults_keep_each_instances_self_frame() {
         r#"{"items":{"first":{"cfg":{"a":7,"b":0},"n":0},"second":{"cfg":{"a":8,"b":2},"n":2}}}"#
     );
 }
+
+#[test]
+fn same_body_self_cycle_checks_with_both_edge_spans() {
+    let text = "struct Root { version: Str, tag: Str }\n\
+                version = \"#{self.tag}\"\ntag = \"v#{self.version}\"\n";
+    let fixture = fixture(text);
+    let checked = check(&fixture.host, &fixture.root)
+        .expect("a provisional body cycle does not prevent checking");
+    assert!(!checked.warnings().has_errors());
+    let warnings: Vec<_> = checked.warnings().iter().collect();
+    assert_eq!(warnings.len(), 1);
+    let warning = &warnings[0].diagnostic;
+    assert_eq!(warning.code, "W0607");
+    assert_eq!(warning.severity, stav::Severity::Warning);
+    let spans: Vec<_> = warning
+        .labels
+        .iter()
+        .map(|label| &text[label.span.range()])
+        .collect();
+    assert_eq!(spans, ["\"#{self.tag}\"", "\"v#{self.version}\""]);
+}
+
+#[test]
+fn same_body_self_cycle_errors_with_both_winning_edges() {
+    let text = "struct Root { version: Str, tag: Str }\n\
+                version = \"#{self.tag}\"\ntag = \"v#{self.version}\"\n";
+    let fixture = fixture(text);
+    let checked = check(&fixture.host, &fixture.root).expect("the body cycle only warns");
+    let errors = checked
+        .eval(&fixture.limits)
+        .expect_err("the winning edges form a cycle");
+    let errors: Vec<_> = errors.iter().collect();
+    assert_eq!(errors.len(), 1);
+    let error = &errors[0].diagnostic;
+    assert_eq!(error.code, "E0607");
+    assert_eq!(error.severity, stav::Severity::Error);
+    let spans: Vec<_> = error
+        .labels
+        .iter()
+        .map(|label| &text[label.span.range()])
+        .collect();
+    assert_eq!(spans, ["\"#{self.tag}\"", "\"v#{self.version}\""]);
+    assert_eq!(error.labels[0].message, "`version` reads `tag`");
+    assert_eq!(error.labels[1].message, "`tag` reads `version`");
+}
+
+#[test]
+fn forced_entry_breaks_same_body_self_cycles() {
+    for (fields, body, overlay, expected) in [
+        (
+            "version: Str, tag: Str",
+            "version = \"#{self.tag}\"\ntag = \"v#{self.version}\"",
+            "tag = force(\"v1\")",
+            r#"{"tag":"v1","version":"v1"}"#,
+        ),
+        (
+            "a: Int, b: Int",
+            "a = self.b\nb = self.a",
+            "a = force(1)",
+            r#"{"a":1,"b":1}"#,
+        ),
+    ] {
+        let text = format!(
+            "#! entries main.stav overlay.stav\n#- file main.stav\n\
+             struct Root {{ {fields} }}\n{body}\n#- file overlay.stav\n{overlay}\n"
+        );
+        let fixture = fixture(&text);
+        let checked = check(&fixture.host, &fixture.root).expect("the body cycle only warns");
+        assert!(
+            checked
+                .warnings()
+                .iter()
+                .any(|d| d.diagnostic.code == "W0607")
+        );
+        assert_eq!(
+            canonical(&text).expect("the winning graph is acyclic"),
+            expected
+        );
+    }
+}
+
+#[test]
+fn self_cycles_in_parts_warn_and_can_be_broken_by_force() {
+    for part in [
+        "let cyclic: Part<Root> = part { a = self.b\nb = self.a }\ninclude cyclic",
+        "include \"./cycle.stav\"\n#- file cycle.stav\na = self.b\nb = self.a",
+    ] {
+        let text = format!("struct Root {{ a: Int, b: Int }}\na = force(1)\n{part}\n");
+        let fixture = fixture(&text);
+        let checked = check(&fixture.host, &fixture.root).expect("a part body cycle only warns");
+        let warnings: Vec<_> = checked.warnings().iter().collect();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].diagnostic.code, "W0607");
+        assert_eq!(warnings[0].diagnostic.labels.len(), 2);
+        assert_eq!(canonical(&text).unwrap(), r#"{"a":1,"b":1}"#);
+    }
+}
+
+#[test]
+fn decomposed_map_literals_reject_duplicate_computed_keys() {
+    for value in ["self.n", "1"] {
+        let text = format!(
+            "struct Root {{ n: Int = 1, m: Map<Str, Int> }}\n\
+             let key = \"a\"\n\
+             m = {{ \"#{{key}}\" = {value}, a = {value} }}\n"
+        );
+        let error = canonical(&text).expect_err("entries of one literal must have unique keys");
+        assert!(error.contains("E0605"), "{error}");
+    }
+    let text = "struct Root { n: Int = 1, m: Map<Str, List<Int>> }\n\
+                let key = \"a\"\n\
+                m = { \"#{key}\" = [self.n], a = [self.n] }\n";
+    let error = canonical(text).expect_err("duplicate literal entries cannot concatenate");
+    assert!(error.contains("E0605"), "{error}");
+}

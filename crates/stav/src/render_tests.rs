@@ -291,3 +291,19 @@ fn yaml_nests_sequences_and_mappings() {
     let expected = "- - 1\n  - 2\n- a: 1\n  b: []\n- 1.0e-7\n- /etc/fix.patch\n";
     assert_eq!(value.render(Format::Yaml).unwrap(), expected);
 }
+
+#[test]
+fn canonical_json_keeps_large_integers_exact() {
+    assert_eq!(
+        Value::Int(9_007_199_254_740_993).to_canonical_json(),
+        "9007199254740993"
+    );
+    assert_eq!(
+        Value::Int(i64::MAX).to_canonical_json(),
+        "9223372036854775807"
+    );
+    assert_eq!(
+        Value::Int(i64::MIN).to_canonical_json(),
+        "-9223372036854775808"
+    );
+}

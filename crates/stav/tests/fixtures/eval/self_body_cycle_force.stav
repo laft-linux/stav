@@ -1,0 +1,11 @@
+#! entries main.stav overlay.stav
+#- file main.stav
+struct Root {
+  version: Str
+  tag:     Str
+}
+
+version = "#{self.tag}"
+tag     = "v#{self.version}"
+#- file overlay.stav
+tag = force("v1.0")

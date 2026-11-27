@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/eval.rs
+assertion_line: 225
+expression: output
+---
+--- JSON
+{
+  "version": "v1.0",
+  "tag": "v1.0"
+}

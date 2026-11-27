@@ -90,7 +90,7 @@ The first digits of a code name the area it belongs to.
 | [E0604](#e0604) | an index out of range, a missing key or an unknown variant |
 | [E0605](#e0605) | a duplicate key produced by a comprehension |
 | [E0606](#e0606) | `self` where it cannot be used |
-| [E0607](#e0607) | a cycle of `self` dependencies |
+| [E0607](#e0607) | a cycle of winning `self` dependencies in a block instance |
 | [E0608](#e0608) | `fail(...)` was called |
 | [E0609](#e0609) | an invalid computed regular expression |
 | [E0610](#e0610) | a recursive function |
@@ -114,6 +114,7 @@ The first digits of a code name the area it belongs to.
 | [E0805](#e0805) | an attribute that does not exist or does not convert |
 | [W0302](#w0302) | a binding that hides a variant |
 | [W0434](#w0434) | a `match` arm that can never match |
+| [W0607](#w0607) | a provisional cycle of `self` dependencies inside one body |
 | [W0703](#w0703) | a part file included twice into one body |
 
 ## Lexical errors
@@ -1728,7 +1729,7 @@ Remove the competing contributions, give them a lower priority, or compute the w
 
 ## Evaluation
 
-These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. The checks for `self` cycles and recursion run before evaluation.
+These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. Recursion is rejected during checking. Winning `self` dependencies are checked per block instance after merging, before resolving late values.
 
 ### E0600
 
@@ -1890,7 +1891,7 @@ Compute the condition from values that are known without merging, such as a `let
 
 ### E0607
 
-`self` dependencies form a cycle, so a value would depend on itself. A cycle inside one body is found during checking. Cycles that only appear once files are merged are found after merging, per block instance, using only the contributions that won.
+The winning `self` dependencies of one block instance form a cycle, so a value would depend on itself. This error is reported during evaluation after merging, before resolving late values. Losing contributions add no dependency, and different instances of the same struct have separate graphs. A body-local cycle produces only the provisional warning [W0607](#w0607) during checking because an overlay can still break it.
 
 <!-- file: e0607.stav -->
 
@@ -1908,10 +1909,10 @@ package {
 }
 ```
 
-<!-- run: check e0607.stav -->
+<!-- run: eval e0607.stav -->
 
 ```text
-error[E0607]: `self` dependencies form a cycle
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
    ┌─ e0607.stav:9:13
    │
  9 │   version = "#{self.tag}"
@@ -1922,9 +1923,22 @@ error[E0607]: `self` dependencies form a cycle
    │             ------------------ `Package.tag` reads `Package.version`
    │
    = note: cycle: Package.version -> Package.tag -> Package.version
+   = help: set one of the attributes without `self` at a higher priority
+
+error[E0607]: `self` dependencies form a cycle
+   ┌─ e0607.stav:9:13
+   │
+ 9 │   version = "#{self.tag}"
+   │             ^^^^^^^^^^^^^
+   │             │
+   │             `package.version` reads `package.tag`
+10 │   tag     = "v#{self.version}"
+   │             ------------------ `package.tag` reads `package.version`
+   │
+   = note: cycle: package.version -> package.tag -> package.version
 ```
 
-Break the cycle by setting one of the attributes without `self`. [Late-bound self](/guide/self) explains how the graph is built.
+Break the cycle by setting one of the attributes without `self`, using `force(...)` to override a cyclic contribution if needed. [Late-bound self](/guide/self) explains how the graph is built.
 
 ### E0608
 
@@ -2434,6 +2448,41 @@ warning[W0434]: this arm can never match
 ```
 
 Remove the arm, or move it before the arms that cover it.
+
+### W0607
+
+`self` dependencies inside one body may form a cycle. Checking succeeds because merging may replace one of those contributions at a higher priority. This warning also applies inside parts. It includes the edge locations and the dependency chain.
+
+<!-- file: w0607.stav -->
+
+```stav
+struct Root {
+  version: Str
+  tag:     Str
+}
+
+version = "#{self.tag}"
+tag     = "v#{self.version}"
+```
+
+<!-- run: check w0607.stav -->
+
+```text
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+  ┌─ w0607.stav:6:11
+  │
+6 │ version = "#{self.tag}"
+  │           ^^^^^^^^^^^^^
+  │           │
+  │           `Root.version` reads `Root.tag`
+7 │ tag     = "v#{self.version}"
+  │           ------------------ `Root.tag` reads `Root.version`
+  │
+  = note: cycle: Root.version -> Root.tag -> Root.version
+  = help: set one of the attributes without `self` at a higher priority
+```
+
+Set one of the attributes without `self` at a higher priority to break the cycle. Only the winning dependencies of each block instance are authoritative. If the cycle survives merging, evaluation fails with [E0607](#e0607).
 
 ### W0703
 

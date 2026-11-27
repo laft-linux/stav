@@ -4,7 +4,9 @@
 //! resolves imports and part files, resolves every name and type checks
 //! every declaration, expression and statement, and enforces the totality
 //! rules: no recursive functions, bindings or types, and no cycles of
-//! imports, part files or `self` dependencies. Nothing is evaluated.
+//! imports or part files. Body-local `self` cycles produce provisional
+//! warnings. Evaluation checks the winning dependencies per block instance
+//! after merging. Nothing is evaluated during checking.
 
 mod body;
 pub(crate) mod builtins;

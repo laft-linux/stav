@@ -787,3 +787,39 @@ fn invalid_block_field_types_keep_their_code() {
             .contains("map of structs or a sum type")
     );
 }
+
+#[test]
+fn recursive_parameter_defaults_are_rejected() {
+    let fixture =
+        fixture("struct Root { n: Int = recur() }\nfn recur(n: Int = recur()) -> Int = n\n");
+    let errors = check(&fixture.host, &fixture.root).expect_err("defaults cannot recurse");
+    assert!(
+        errors.iter().any(|d| d.diagnostic.code == "E0610"),
+        "{errors}"
+    );
+    assert!(
+        errors.to_string().contains("cycle: `recur` -> `recur`"),
+        "{errors}"
+    );
+}
+
+#[test]
+fn mutual_signature_refinement_recursion_is_rejected() {
+    let fixture = fixture(
+        "struct Root { ok: Bool = left(1) }\n\
+         fn left(n: Int where right) -> Bool = true\n\
+         fn right(n: Int where left) -> Bool = true\n",
+    );
+    let errors =
+        check(&fixture.host, &fixture.root).expect_err("signature predicates cannot recurse");
+    assert!(
+        errors.iter().any(|d| d.diagnostic.code == "E0610"),
+        "{errors}"
+    );
+    assert!(
+        errors
+            .to_string()
+            .contains("cycle: `left` -> `right` -> `left`"),
+        "{errors}"
+    );
+}

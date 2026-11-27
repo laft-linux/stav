@@ -1,0 +1,11 @@
+---
+source: crates/stav/tests/eval.rs
+assertion_line: 225
+expression: output
+---
+--- errors
+error[E0607]: `self` dependencies form a cycle
+  --> app/main.stav:6:11
+  label: app/main.stav:6:11: `version` reads `tag`
+  label: app/main.stav:7:11: `tag` reads `version`
+  note: cycle: version -> tag -> version

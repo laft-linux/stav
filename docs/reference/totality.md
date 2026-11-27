@@ -13,7 +13,7 @@ The checker enforces each of these rules before anything is evaluated, except th
 | Types cannot contain themselves. | [`E0410`](/reference/error-codes#e0410) |
 | Loops and comprehensions run only over collections that already exist. | not expressible |
 | Imports and part files cannot form a cycle. | [`E0703`](/reference/error-codes#e0703) |
-| `self` dependencies cannot form a cycle. | [`E0607`](/reference/error-codes#e0607) |
+| Winning `self` dependencies of each block instance cannot form a cycle. | [`E0607`](/reference/error-codes#e0607) |
 
 ### No recursion
 
@@ -166,7 +166,7 @@ error[E0703]: imports and part files form a cycle
 
 ### Acyclic `self`
 
-An attribute computed from `self` is evaluated after the attributes it reads. Two attributes that read each other would leave both undefined. The checker rejects a cycle within one body as soon as it sees it, and the evaluator checks the winning contributions of every block instance again after merging, before it evaluates any of them. [Late-bound self](/guide/self) explains both checks.
+An attribute computed from `self` is evaluated after the attributes it reads. Two attributes that read each other would leave both undefined. The checker reports a cycle within one body as the provisional warning [`W0607`](/reference/error-codes#w0607), without rejecting the program. Another entry or included part can override an edge with a constant and break the cycle. After merging, the evaluator checks only the winning contributions of every block instance, before resolving its late values. A cycle that survives is the error [`E0607`](/reference/error-codes#e0607). Dependencies from distinct instances are never combined. [Late-bound self](/guide/self) explains both checks.
 
 <!-- file: selfcycle.stav -->
 
@@ -187,7 +187,7 @@ package codec {
 <!-- run: check selfcycle.stav -->
 
 ```text
-error[E0607]: `self` dependencies form a cycle
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
    ┌─ selfcycle.stav:9:13
    │
  9 │   version = "#{self.tag}"
@@ -198,6 +198,38 @@ error[E0607]: `self` dependencies form a cycle
    │             ------------------ `Package.tag` reads `Package.version`
    │
    = note: cycle: Package.version -> Package.tag -> Package.version
+   = help: set one of the attributes without `self` at a higher priority
+```
+
+Checking succeeds with that warning. Without an override, both edges win and evaluation fails:
+
+<!-- run: eval selfcycle.stav -->
+
+```text
+warning[W0607]: `self` dependencies may form a cycle unless merging overrides an edge
+   ┌─ selfcycle.stav:9:13
+   │
+ 9 │   version = "#{self.tag}"
+   │             ^^^^^^^^^^^^^
+   │             │
+   │             `Package.version` reads `Package.tag`
+10 │   tag     = "v#{self.version}"
+   │             ------------------ `Package.tag` reads `Package.version`
+   │
+   = note: cycle: Package.version -> Package.tag -> Package.version
+   = help: set one of the attributes without `self` at a higher priority
+
+error[E0607]: `self` dependencies form a cycle
+   ┌─ selfcycle.stav:9:13
+   │
+ 9 │   version = "#{self.tag}"
+   │             ^^^^^^^^^^^^^
+   │             │
+   │             `packages.codec.version` reads `packages.codec.tag`
+10 │   tag     = "v#{self.version}"
+   │             ------------------ `packages.codec.tag` reads `packages.codec.version`
+   │
+   = note: cycle: packages.codec.version -> packages.codec.tag -> packages.codec.version
 ```
 
 ## Why evaluation terminates
@@ -206,7 +238,7 @@ Take any program that passes these checks. Because the call graph is acyclic, ev
 
 A lambda could only call itself if it received itself as an argument, and the type of such a parameter would have to contain itself. Types cannot, so no lambda can reach itself. The only repetition left is iteration, which runs a fixed number of times over collections that already exist. Each expression thus reaches a value in a finite number of steps.
 
-Statements add a finite amount of work each. A `for` runs once per element. Imports and includes unfold finitely, because their graphs are acyclic. Merging visits each contribution once, and each deferred `self` value is evaluated once, in an order that exists because the `self` graph is acyclic. The whole evaluation therefore ends.
+Statements add a finite amount of work each. A `for` runs once per element. Imports and includes unfold finitely, because their graphs are acyclic. Merging visits each contribution once. A winning `self` cycle stops evaluation with an error before its late values are resolved. Otherwise each deferred `self` value is evaluated once, in an order that exists because the winning graph is acyclic. The whole evaluation therefore ends.
 
 ## Bounded iteration
 

@@ -10,6 +10,7 @@
 
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use super::env::{Env, LateLet, Slot, bind, identity};
@@ -534,6 +535,7 @@ impl<'c> Eval<'c> {
                 Ok(())
             }
             (Expr::Map(map), Type::Map(_, value_ty)) => {
+                let mut keys = BTreeSet::new();
                 out.push(Pending {
                     path: path.clone(),
                     contrib: template.with(Kind::Present),
@@ -543,6 +545,13 @@ impl<'c> Eval<'c> {
                         continue;
                     };
                     let name = self.key_text(cx, key)?;
+                    if !keys.insert(name.clone()) {
+                        return Err(self.fail(
+                            cx.at(map.syntax().span()),
+                            "E0605",
+                            format!("the key `{name}` is given more than once"),
+                        ));
+                    }
                     let mut sub = path.clone();
                     sub.push(Seg::Key(name.into()));
                     let template = template.spanning(entry.syntax().span());

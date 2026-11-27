@@ -1,0 +1,3 @@
+struct Root { n: Int = 1, m: Map<Str, Int> }
+let key = "a"
+m = { "#{key}" = self.n, a = self.n }
