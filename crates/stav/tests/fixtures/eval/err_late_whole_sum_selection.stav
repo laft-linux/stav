@@ -1,0 +1,8 @@
+type Build =
+  | cargo(features: List<Str> = [])
+  | meson(options: List<Str> = [])
+
+struct Root { flag: Bool = false, zero: Int = 0, build: Build }
+
+build cargo { features = ["#{1 / self.zero}"] }
+build = force(if self.flag { meson(options = []) } else { cargo() })

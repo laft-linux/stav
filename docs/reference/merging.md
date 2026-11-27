@@ -23,7 +23,7 @@ Every statement form produces contributions:
 
 Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. Map-literal keys cannot read `self` either, including through interpolation, function arguments or late bindings. Map-literal values may read it. These restrictions keep contribution paths independent of merged values. [Expressions and statements](/reference/expressions) describes each statement in full.
 
-A late whole value at a map, struct or `Data` path, including through `Option`, permits other static contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. This validation runs before any deferred value is evaluated and never considers the output of deferred evaluation. Higher contributions win at their own paths regardless of the whole's keys, and the whole wins everywhere else under its path. A whole that higher contributions fully replace is never evaluated and adds no dependencies.
+A late whole value at a map, struct, sum or `Data` path, including through `Option`, permits other static contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. This validation runs before any deferred value is evaluated and never considers the output of deferred evaluation. Higher contributions win at their own paths regardless of the whole's keys, and the whole wins everywhere else under its path. A whole that higher contributions fully replace is never evaluated and adds no dependencies.
 
 Declared defaults have the lowest priority, so explicit overrides of a late whole field default are accepted. A partial literal preserves unmentioned keys and fields. Overriding every field of a struct makes its whole default unnecessary. Its own generated field defaults are not independent competing contributions. Struct and map literals at statically typed paths split into child contributions. A literal assigned to `Data` remains a whole value, so its syntax does not exempt it from the rule.
 
@@ -410,6 +410,39 @@ error[E0502]: tagged blocks select different variants of `jobs.c.build`
 ```
 
 A payload sum set only through whole values, such as `build = script(target = "x")`, merges like a scalar.
+
+A late whole sum also obeys [E0504](/reference/error-codes#e0504). Every other static contribution at or below its path must have strictly higher priority. In particular, a plain tagged-block selection cannot coexist with a plain or forced late whole value, even if both would select the same variant. This is checked before any deferred expression runs and does not depend on the variant produced.
+
+A plain selection replaces a `default(...)` late whole or a declared self-reading sum default. The losing whole is never evaluated and adds no dependency edges. The selected payload still receives its own declared defaults:
+
+<!-- file: late-tagged-default.stav -->
+
+```stav
+type Build =
+  | native(features: List<Str> = [])
+  | script(target: Str = "all")
+
+struct Root { zero: Int = 0, build: Build = failing(self.zero) }
+
+fn failing(n: Int) -> Build = script(target = "#{1 / n}")
+
+build native { }
+```
+
+<!-- run: eval late-tagged-default.stav -->
+
+```json
+{
+  "zero": 0,
+  "build": {
+    "native": {
+      "features": []
+    }
+  }
+}
+```
+
+The division by zero is never evaluated. The same replacement works through `Option<Build>`.
 
 ### Data
 

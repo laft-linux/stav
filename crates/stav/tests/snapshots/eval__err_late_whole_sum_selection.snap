@@ -1,0 +1,12 @@
+---
+source: crates/stav/tests/eval.rs
+assertion_line: 225
+expression: output
+---
+--- errors
+error[E0504]: a late whole value for `build` has other contributions at equal or lower priority
+  --> app/main.stav:8:15
+  label: app/main.stav:8:15: a value that reads `self` (force)
+  label: app/main.stav:7:1: `cargo` (plain)
+  label: app/main.stav:7:26: a value that reads `self` (plain)
+  help: remove the other contributions, raise their priority, or compute the whole value without `self`

@@ -1,0 +1,10 @@
+#! render json toml yaml
+type Build =
+  | cargo(features: List<Str> = [])
+  | meson(options: List<Str> = [])
+
+struct Root { zero: Int = 0, build: Build = failing(self.zero) }
+
+fn failing(n: Int) -> Build = meson(options = ["#{1 / n}"])
+
+build cargo { }

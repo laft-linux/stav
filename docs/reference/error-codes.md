@@ -1701,7 +1701,7 @@ Give one of them a higher priority. A `force(...)` or `default(...)` resolves ev
 
 ### E0504
 
-A late whole value at a map, struct or `Data` path may coexist only with strictly higher priority contributions at or below that path. An equal or lower priority contribution reports this error, citing both sources. This also applies through `Option`. The check examines static statement and declaration contributions before any deferred value runs. Values produced later cannot introduce this error.
+A late whole value at a map, struct, sum or `Data` path may coexist only with strictly higher priority contributions at or below that path. An equal or lower priority contribution reports this error, citing both sources. This also applies through `Option`. The check examines static statement and declaration contributions before any deferred value runs. Values produced later cannot introduce this error.
 
 Struct and map literals at statically typed struct or map paths split into per-field or per-key contributions instead. A literal assigned to `Data` remains one whole value, so the same restriction applies when it reads `self`.
 
@@ -1731,6 +1731,42 @@ error[E0504]: a late whole value for `settings` has other contributions at equal
   │
   = help: remove the other contributions, raise their priority, or compute the whole value without `self`
 ```
+
+For a sum, a tagged block contributes a variant selection at the sum's path and attributes below it. A selection of the same or a lower priority reports E0504 regardless of the variant the late value would produce. A strictly higher priority selection replaces the late whole value, so it never runs.
+
+<!-- file: e0504-sum.stav -->
+
+```stav
+type Build =
+  | native(features: List<Str> = [])
+  | script(target: Str = "all")
+
+struct Root { flag: Bool = false, zero: Int = 0, build: Build }
+
+build native { features = ["#{1 / self.zero}"] }
+build = force(if self.flag { script() } else { native() })
+```
+
+<!-- run: eval e0504-sum.stav -->
+
+```text
+error[E0504]: a late whole value for `build` has other contributions at equal or lower priority
+  ┌─ e0504-sum.stav:8:15
+  │
+7 │ build native { features = ["#{1 / self.zero}"] }
+  │ ------------------------------------------------
+  │ │                         │
+  │ │                         a value that reads `self` (plain)
+  │ `native` (plain)
+8 │ build = force(if self.flag { script() } else { native() })
+  │               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  │               │
+  │               a value that reads `self` (force)
+  │
+  = help: remove the other contributions, raise their priority, or compute the whole value without `self`
+```
+
+This reports E0504 for either value of `flag`, before either deferred expression runs.
 
 Remove the competing contributions, give them strictly higher priority, or compute the whole value without `self`. A higher contribution wins at its own path regardless of the keys the whole produces. The whole supplies the remaining paths. If higher contributions fully replace it, it is never evaluated and contributes no dependency edges.
 

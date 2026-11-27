@@ -151,6 +151,8 @@ impl Node {
 pub(crate) struct Merge {
     pub(crate) contribs: Vec<Contrib>,
     nodes: Vec<Node>,
+    /// Declaring instances of active implicit defaults.
+    default_owners: BTreeMap<u32, NodeId>,
     /// Whether static whole validation has completed.
     static_checked: bool,
 }
@@ -191,6 +193,12 @@ impl Merge {
         n
     }
 
+    fn insert_default(&mut self, base: NodeId, path: &[Seg], contrib: Contrib, owner: NodeId) {
+        let id = u32::try_from(self.contribs.len()).unwrap_or(u32::MAX);
+        self.insert(base, path, contrib);
+        self.default_owners.insert(id, owner);
+    }
+
     /// Records an implicit default for validation without making it a winner.
     fn insert_check(&mut self, base: NodeId, path: &[Seg], contrib: Contrib, owner: NodeId) {
         let mut n = base;
@@ -225,11 +233,19 @@ impl Merge {
             .collect()
     }
 
-    /// Includes suspended defaults only when their declaring instance
+    /// Includes implicit defaults only when their declaring instance
     /// encloses `n`. Defaults owned by `n` or its descendants are internal
     /// fallbacks of its whole value, not competitors of that value.
     fn static_below(&self, n: NodeId) -> Vec<u32> {
-        let mut ids = self.below(n);
+        let mut ids: Vec<u32> = self
+            .below(n)
+            .into_iter()
+            .filter(|id| {
+                self.default_owners
+                    .get(id)
+                    .is_none_or(|&owner| self.encloses(owner, n))
+            })
+            .collect();
         let mut stack: Vec<NodeId> = self.node(n).children.values().copied().collect();
         while let Some(c) = stack.pop() {
             let node = self.node(c);
@@ -460,7 +476,7 @@ impl<'c> Eval<'c> {
                     let whole_conflict = !self.merge.static_checked
                         && matches!(
                             self.c.types.get(inner),
-                            Type::Struct(_) | Type::Map(_, _) | Type::Data
+                            Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
                         )
                         && self.whole_conflict(n).is_some();
                     if !whole_conflict {
@@ -564,9 +580,15 @@ impl<'c> Eval<'c> {
             .types
             .unwrap_option(ty)
             .unwrap_or_else(|| self.c.types.peel(ty));
+        if let Type::Sum(s) = self.c.types.get(inner) {
+            let s = *s;
+            for (id, owner) in self.merge.node(n).checks.clone() {
+                self.expand_sum_payload(n, s, id, Some(owner));
+            }
+        }
         if matches!(
             self.c.types.get(inner),
-            Type::Struct(_) | Type::Map(_, _) | Type::Data
+            Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
         ) {
             if let Some(ids) = self.whole_conflict(n) {
                 self.conflict(n, &ids, "E0504");
@@ -723,6 +745,14 @@ impl<'c> Eval<'c> {
     /// Whether a higher static contribution between `base` and `n`
     /// makes `n` independent of the whole value at `base`.
     fn covered_path(&self, base: NodeId, n: NodeId, priority: Prio) -> bool {
+        // A selection replaces a late sum at its own path, not a sum
+        // value emitted as part of an enclosing whole.
+        if self.merge.node(base).contribs.iter().any(|&id| {
+            let c = self.merge.contrib(id);
+            c.prio > priority && matches!(c.kind, Kind::Select(_))
+        }) {
+            return true;
+        }
         let mut current = Some(n);
         while let Some(c) = current {
             if self.covered(c, priority) {
@@ -844,7 +874,8 @@ impl<'c> Eval<'c> {
                         self.merge
                             .insert_check(child, &p.path, p.contrib.clone(), n);
                     } else {
-                        self.merge.insert(child, &p.path, p.contrib.clone());
+                        self.merge
+                            .insert_default(child, &p.path, p.contrib.clone(), n);
                     }
                 }
             } else {
@@ -863,7 +894,7 @@ impl<'c> Eval<'c> {
                     if validation_only {
                         self.merge.insert_check(child, &p.path, p.contrib, n);
                     } else {
-                        self.merge.insert(child, &p.path, p.contrib);
+                        self.merge.insert_default(child, &p.path, p.contrib, n);
                     }
                 }
             }
@@ -910,42 +941,55 @@ impl<'c> Eval<'c> {
         Ok(out)
     }
 
+    /// Expands sum payloads without activating suspended defaults as winners.
+    fn expand_sum_payload(&mut self, n: NodeId, s: SumId, id: u32, check_owner: Option<NodeId>) {
+        let contrib = self.merge.contrib(id).clone();
+        let Kind::Value(value) = &contrib.kind else {
+            return;
+        };
+        let (variant, fields, set) = match value {
+            Val::Tag(_, v) => (*v, Vec::new(), Vec::new()),
+            Val::Variant(v) => (v.index, v.fields.clone(), v.set.clone()),
+            _ => return,
+        };
+        self.merge.contribs[id as usize].kind = Kind::Select(variant);
+        let params: Vec<(String, TypeId)> = self
+            .c
+            .types
+            .sum(s)
+            .variants
+            .get(variant as usize)
+            .and_then(|v| v.fields.as_ref())
+            .map(|f| f.iter().map(|p| (p.name.clone(), p.ty)).collect())
+            .unwrap_or_default();
+        let payload = self.merge.child_or_new(n, Seg::Variant(variant));
+        let template = contrib.payload();
+        let mut out = Vec::new();
+        for (i, ((name, ty), value)) in params.into_iter().zip(fields).enumerate() {
+            if set.get(i).copied().unwrap_or(true) {
+                let template = template.part(&name);
+                self.decompose(vec![field_seg(i)], ty, value, &template, &mut out);
+            }
+        }
+        let owner = self.merge.default_owners.get(&id).copied();
+        for p in out {
+            if let Some(owner) = check_owner {
+                self.merge.insert_check(payload, &p.path, p.contrib, owner);
+            } else if let Some(owner) = owner {
+                self.merge
+                    .insert_default(payload, &p.path, p.contrib, owner);
+            } else {
+                self.merge.insert(payload, &p.path, p.contrib);
+            }
+        }
+    }
+
     /// Structures a sum selected by tagged blocks. Whole values become a
     /// selection and payload contributions at their own priority.
     fn tagged(&mut self, n: NodeId, s: SumId, deferred: Vec<u32>) -> R<()> {
         let ids = self.merge.node(n).contribs.clone();
         for id in ids {
-            let contrib = self.merge.contrib(id).clone();
-            let Kind::Value(value) = &contrib.kind else {
-                continue;
-            };
-            let (variant, fields, set) = match value {
-                Val::Tag(_, v) => (*v, Vec::new(), Vec::new()),
-                Val::Variant(v) => (v.index, v.fields.clone(), v.set.clone()),
-                _ => continue,
-            };
-            self.merge.contribs[id as usize].kind = Kind::Select(variant);
-            let params: Vec<(String, TypeId)> = self
-                .c
-                .types
-                .sum(s)
-                .variants
-                .get(variant as usize)
-                .and_then(|v| v.fields.as_ref())
-                .map(|f| f.iter().map(|p| (p.name.clone(), p.ty)).collect())
-                .unwrap_or_default();
-            let payload = self.merge.child_or_new(n, Seg::Variant(variant));
-            let template = contrib.payload();
-            let mut out = Vec::new();
-            for (i, ((name, ty), value)) in params.into_iter().zip(fields).enumerate() {
-                if set.get(i).copied().unwrap_or(true) {
-                    let template = template.part(&name);
-                    self.decompose(vec![field_seg(i)], ty, value, &template, &mut out);
-                }
-            }
-            for p in out {
-                self.merge.insert(payload, &p.path, p.contrib);
-            }
+            self.expand_sum_payload(n, s, id, None);
         }
         let selections: Vec<u32> = self
             .merge
@@ -1043,7 +1087,7 @@ impl<'c> Eval<'c> {
                 let mut out = Vec::new();
                 self.decompose(Vec::new(), ty, value, &template, &mut out);
                 for p in out {
-                    self.merge.insert(child, &p.path, p.contrib);
+                    self.merge.insert_default(child, &p.path, p.contrib, n);
                 }
             }
         }

@@ -1849,3 +1849,161 @@ fn declaration_collection_keeps_eager_default_errors() {
         assert!(error.contains("E0603"), "{text}\n{error}");
     }
 }
+
+#[test]
+fn late_whole_sums_reject_equal_or_lower_priority_selections() {
+    for ty in ["Build", "Option<Build>"] {
+        for flag in [false, true] {
+            for whole in [
+                "if self.flag { meson(options = []) } else { cargo() }",
+                "force(if self.flag { meson(options = []) } else { cargo() })",
+            ] {
+                let text = format!(
+                    "type Build = | cargo(features: List<Str> = []) | meson(options: List<Str> = [])\n\
+                     struct Root {{ flag: Bool = {flag}, zero: Int = 0, build: {ty} }}\n\
+                     build cargo {{ features = [\"#{{1 / self.zero}}\"] }}\n\
+                     build = {whole}\n"
+                );
+                assert_late_whole_error(&text);
+            }
+        }
+    }
+}
+
+#[test]
+fn late_whole_sums_are_replaced_by_higher_priority_selections() {
+    for ty in ["Build", "Option<Build>"] {
+        for payload in ["", "features = [\"selected\"]"] {
+            let text = format!(
+                "type Build = | cargo(features: List<Str> = []) | meson(options: List<Str> = [])\n\
+                 struct Root {{ zero: Int = 0, build: {ty} }}\n\
+                 fn failing(n: Int) -> Build = meson(options = [\"#{{1 / n}}\"])\n\
+                 build = default(failing(self.zero))\n\
+                 build cargo {{ {payload} }}\n"
+            );
+            let expected = if payload.is_empty() {
+                r#"{"build":{"cargo":{"features":[]}},"zero":0}"#
+            } else {
+                r#"{"build":{"cargo":{"features":["selected"]}},"zero":0}"#
+            };
+            assert_eq!(canonical(&text).expect(&text), expected);
+        }
+    }
+}
+
+#[test]
+fn late_whole_sum_declared_defaults_are_replaced_by_blocks() {
+    for ty in ["Build", "Option<Build>"] {
+        let text = format!(
+            "type Build = | cargo(features: List<Str> = []) | meson(options: List<Str> = [])\n\
+             struct Root {{ zero: Int = 0, build: {ty} = failing(self.zero) }}\n\
+             fn failing(n: Int) -> Build = meson(options = [\"#{{1 / n}}\"])\n\
+             build cargo {{}}\n"
+        );
+        assert_eq!(
+            canonical(&text).expect(&text),
+            r#"{"build":{"cargo":{"features":[]}},"zero":0}"#,
+        );
+    }
+}
+
+#[test]
+fn replaced_late_whole_sums_do_not_add_dependency_edges() {
+    let text = r#"
+        type Build = | cargo(features: List<Str> = []) | meson(options: List<Str> = [])
+        struct Root { flag: Bool = self.build == cargo(), build: Build }
+        build = default(if self.flag { meson() } else { cargo() })
+        build cargo {}
+    "#;
+    assert_eq!(
+        canonical(text).expect("the losing sum cannot cause a cycle"),
+        r#"{"build":{"cargo":{"features":[]}},"flag":true}"#,
+    );
+}
+
+#[test]
+fn late_whole_sums_exclude_nested_implicit_defaults_from_competitors() {
+    let text = r#"
+        type Inner = inner(x: Int)
+        type Outer = outer(child: Inner = inner(x = 1))
+        struct Root { zero: Int = 0, value: Outer }
+        fn failing(n: Int) -> Outer = outer(child = inner(x = 1 / n))
+        value = default(failing(self.zero))
+        value outer { child inner {} }
+    "#;
+    assert_eq!(
+        canonical(text).expect("the nested payload keeps its implicit default"),
+        r#"{"value":{"outer":{"child":{"inner":{"x":1}}}},"zero":0}"#,
+    );
+}
+
+#[test]
+fn sum_selections_do_not_replace_enclosing_whole_structs() {
+    let text = r#"
+        type Choice = one(a: Int, b: Option<Int>)
+        struct Box { seed: Int, choice: Choice = make_choice(self.seed) }
+        struct Root { n: Int = 1, cfg: Box = make_box(self.n) }
+        fn make_choice(n: Int) -> Choice = one(a = n, b = n)
+        fn make_box(n: Int) -> Box = Box { seed = n, choice = one(a = n, b = n) }
+        cfg { seed = 7, choice one { a = 9 } }
+    "#;
+    assert_eq!(
+        canonical(text).expect("the enclosing whole supplies the omitted payload field"),
+        r#"{"cfg":{"choice":{"one":{"a":9,"b":1}},"seed":7},"n":1}"#,
+    );
+}
+
+#[test]
+fn late_whole_sum_payload_fields_still_validate_their_declared_defaults() {
+    assert_late_whole_error(
+        r#"
+            type Build = cargo(settings: Map<Str, Int> = {})
+            struct Root { n: Int = 1, build: Build }
+            fn make(n: Int) -> Map<Str, Int> = { a = n }
+            build cargo { settings = make(self.n) }
+        "#,
+    );
+}
+
+#[test]
+fn optional_late_whole_sums_report_static_conflicts_before_presence_conflicts() {
+    assert_late_whole_error(
+        r#"
+            type Build = cargo
+            struct Root { flag: Bool = false, build: Option<Build> }
+            build = if self.flag { cargo } else { none }
+            build = none
+        "#,
+    );
+}
+
+#[test]
+fn late_whole_sums_preserve_defaults_inside_selected_payload_structs() {
+    let text = r#"
+        struct Inner { a: Int = self.b, b: Int = 2 }
+        type Build = cargo(inner: Inner)
+        struct Root { zero: Int = 0, build: Build }
+        fn failing(n: Int) -> Build = cargo(inner = Inner { b = 1 / n })
+        build = default(failing(self.zero))
+        build cargo { inner {} }
+    "#;
+    assert_eq!(
+        canonical(text).expect("the selected payload installs its own defaults"),
+        r#"{"build":{"cargo":{"inner":{"a":2,"b":2}}},"zero":0}"#,
+    );
+}
+
+#[test]
+fn suspended_sum_defaults_keep_their_payload_competitors() {
+    assert_late_whole_error(
+        r#"
+            type Choice = one(settings: Map<Str, Int>)
+            struct Box { choice: Choice = one(settings = {}) }
+            struct Root { zero: Int = 0, cfg: Box }
+            fn make_box(n: Int) -> Box = Box { choice = one(settings = {}) }
+            fn failing(n: Int) -> Map<Str, Int> = { a = 1 / n }
+            cfg = default(make_box(self.zero))
+            cfg { choice one { settings = failing(self.zero) } }
+        "#,
+    );
+}
