@@ -464,6 +464,38 @@ fn participating_constructor_defaults_evaluate_their_arguments() {
 }
 
 #[test]
+fn uncovered_constructor_defaults_run_even_for_discarded_variants() {
+    for fields in ["n = 7", "n = 7\nkept = 9"] {
+        let source = format!(
+            "type Build = cargo(n: Int = 1, kept: Int = 4) | meson(o: Int = 0)\n\
+             struct Root {{ build: Build = meson(o = 1 / 0) }}\n\
+             build cargo {{ {fields} }}"
+        );
+        assert_error(&source, "E0603", &[]);
+    }
+}
+
+#[test]
+fn matching_constructor_defaults_supply_uncovered_payload_fields() {
+    assert_value(
+        "type Build = cargo(n: Int = 1, kept: Int = 4) | meson(o: Int = 0)\n\
+         struct Root { build: Build = cargo(kept = 5) }\n\
+         build cargo { n = 7 }",
+        json!({"build": {"cargo": {"n": 7, "kept": 5}}}),
+    );
+}
+
+#[test]
+fn higher_whole_sums_skip_covered_constructor_defaults() {
+    assert_value(
+        "type Build = cargo(n: Int = 1, kept: Int = 4) | meson(o: Int = 0)\n\
+         struct Root { build: Build = meson(o = 1 / 0) }\n\
+         build = cargo(n = 7, kept = 6)",
+        json!({"build": {"cargo": {"n": 7, "kept": 6}}}),
+    );
+}
+
+#[test]
 fn nonliteral_enclosing_map_defaults_supply_keys_before_cycle_validation() {
     for (whole, a) in [
         ("{}", 1),
