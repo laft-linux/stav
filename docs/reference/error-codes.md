@@ -83,7 +83,7 @@ The first digits of a code name the area it belongs to.
 | [E0501](#e0501) | conflicting values at equal priority |
 | [E0502](#e0502) | tagged blocks that select different variants |
 | [E0503](#e0503) | `Data` values of different shapes at equal priority |
-| [E0504](#e0504) | a late whole value with other contributions at equal or lower priority |
+| [E0504](#e0504) | a late whole value with competing contributions at equal or lower priority |
 | [E0600](#e0600) | an internal error |
 | [E0601](#e0601) | integer overflow |
 | [E0602](#e0602) | a float that is not finite |
@@ -91,7 +91,7 @@ The first digits of a code name the area it belongs to.
 | [E0604](#e0604) | an index out of range, a missing key or an unknown variant |
 | [E0605](#e0605) | a duplicate computed key in a map literal or comprehension |
 | [E0606](#e0606) | `self` where it cannot be used |
-| [E0607](#e0607) | a cycle of winning `self` dependencies in a block instance |
+| [E0607](#e0607) | a cycle of `self` dependencies in a block instance |
 | [E0608](#e0608) | `fail(...)` was called |
 | [E0609](#e0609) | an invalid computed regular expression |
 | [E0610](#e0610) | a recursive function |
@@ -1701,7 +1701,7 @@ Give one of them a higher priority. A `force(...)` or `default(...)` resolves ev
 
 ### E0504
 
-A late whole value at a map, struct, sum or `Data` path may coexist only with strictly higher priority contributions at or below that path. An equal or lower priority contribution reports this error, citing both sources. This also applies through `Option`. The check examines static statement and declaration contributions before any deferred value runs. Values produced later cannot introduce this error.
+A late whole value at a map, struct, sum or `Data` path may coexist only with strictly higher priority competing contributions at or below that path. An equal or lower priority competitor reports this error, citing both sources. This also applies to an `Option` of one of these types. The check excludes **all declared field defaults** at or under the path, and a `none` contribution at the option's own path. Declared defaults are fallbacks rather than rivals, and option presence decides `none` separately. The check examines static contributions before any deferred value runs. Values produced later cannot introduce this error.
 
 Struct and map literals at statically typed struct or map paths split into per-field or per-key contributions instead. A literal assigned to `Data` remains one whole value, so the same restriction applies when it reads `self`.
 
@@ -1732,7 +1732,7 @@ error[E0504]: a late whole value for `settings` has other contributions at equal
   = help: remove the other contributions, raise their priority, or compute the whole value without `self`
 ```
 
-For a sum, a tagged block contributes a variant selection at the sum's path and attributes below it. A selection of the same or a lower priority reports E0504 regardless of the variant the late value would produce. A strictly higher priority selection replaces the late whole value, so it never runs.
+For a sum, a tagged block contributes a variant selection at the sum's path and attributes below it. A selection of the same or a lower priority reports E0504 regardless of the variant the late value would produce. A strictly higher priority tagged-block selection does not suppress the late whole value. A matching variant keeps the whole value's payload beneath the higher contributions. A different variant discards that payload and uses declared-default fallbacks for the newly selected instance. A higher whole attribute contribution of a sum replaces the lower whole value instead.
 
 <!-- file: e0504-sum.stav -->
 
@@ -1768,13 +1768,13 @@ error[E0504]: a late whole value for `build` has other contributions at equal or
 
 This reports E0504 for either value of `flag`, before either deferred expression runs.
 
-Remove the competing contributions, give them strictly higher priority, or compute the whole value without `self`. A higher contribution wins at its own path regardless of the keys the whole produces. The whole supplies the remaining paths. If higher contributions fully replace it, it is never evaluated and contributes no dependency edges.
+Remove the competing contributions, give them strictly higher priority, or compute the whole value without `self`. A higher contribution wins at its own path regardless of the keys the whole produces. Whole values supply the remaining paths in priority order. Where no whole value supplies an instance created by a higher contribution, declared defaults fill what remains, at every depth. A late whole struct preserves fields its constructor computed from defaults. An eager struct assignment instead contributes only explicitly given fields and fills omitted defaults again after merging.
 
-A declared field default has the lowest priority, so explicit overrides of a late whole default are accepted. A partial struct or map literal still preserves unmentioned fields or keys. Overriding every field of a struct makes its whole default unnecessary. The defaults generated for that whole struct's own fields are not independent competitors. Map keys still cannot read `self`, as explained under [E0606](#e0606).
+A whole struct need not run if higher contributions cover every field recursively. A late whole map always runs, and layered maps retain keys that higher maps omit. A tagged-block selection does not cover a sum field, but a higher whole attribute contribution of a sum does. [Merging rules](/reference/merging#late-whole-values) explains coverage and fallback behavior in full. Map keys still cannot read `self`, as explained under [E0606](#e0606).
 
 ## Evaluation
 
-These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. Recursion is rejected during checking. Winning `self` dependencies are checked per block instance after merging, before resolving late values.
+These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. Recursion is rejected during checking. Winning `self` dependencies and potential declared-default fallbacks under late whole values are checked per block instance after merging, before resolving late values.
 
 ### E0600
 
@@ -1928,7 +1928,7 @@ error[E0605]: the key `a` is given more than once
 
 ### E0606
 
-`self` is read where it cannot be used. `self` is resolved after merging, so it cannot decide which contributions exist. It is not allowed in the condition of `if`, the collection of `for`, block labels, map-literal keys, `include` expressions, function bodies and lambdas. This includes a read inside a key's interpolation, a function argument, or an expression-local `let`. A binding that reads `self` cannot be used there either, and cannot be used from the body of another block. Map-literal values may read `self`. This rule applies to every map literal key, including literals inside lists, function arguments and `Data` values. Compute keys without `self`.
+`self` is read where it cannot be used. `self` is resolved after merging, so it cannot decide which contributions exist. It is not allowed in the condition of `if`, the collection of `for`, block labels, map-literal keys, `include` expressions, function bodies, lambdas, parameter defaults and sum payload defaults. This includes a read inside a key's interpolation, a function argument, or an expression-local `let`. A binding that reads `self` cannot be used there either, and cannot be used from the body of another block. Map-literal values may read `self`. This rule applies to every map literal key, including literals inside lists, function arguments and `Data` values. The map-key diagnostic suggests "compute the key without `self`".
 
 <!-- file: e0606.stav -->
 
@@ -1956,7 +1956,7 @@ Compute the condition from values that are known without merging, such as a `let
 
 ### E0607
 
-The winning `self` dependencies of one block instance form a cycle, so a value would depend on itself. This error is reported during evaluation after merging, before resolving late values. Losing contributions add no dependency, and different instances of the same struct have separate graphs. A body-local cycle produces only the provisional warning [W0607](#w0607) during checking because an overlay can still break it.
+The `self` dependencies of one block instance form a cycle, so a value could depend on itself. This error is reported during evaluation after merging, before resolving late values. The graph contains winning dependencies and the edges of declared defaults that might fill higher-created instances under a late whole value. These fallback edges are added at every depth, including through struct fields and struct-typed payload fields, whether or not the defaults end up used. This conservative check can reject a cycle involving an unused default, because the graph must be acyclic before the whole value runs. Direct struct fields that the whole always supplies do not take their defaults and add no fallback edges. Other losing contributions add no dependency, and different instances of the same struct have separate graphs. A body-local cycle produces only the provisional warning [W0607](#w0607) during checking because an overlay can still break it.
 
 <!-- file: e0607.stav -->
 
@@ -2547,7 +2547,7 @@ warning[W0607]: `self` dependencies form a cycle unless something overrides them
   = help: set one of the attributes without `self` at a higher priority
 ```
 
-Set one of the attributes without `self` at a higher priority to break the cycle. Only the winning dependencies of each block instance are authoritative. If the cycle survives merging, evaluation fails with [E0607](#e0607).
+Set one of the attributes without `self` at a higher priority to break the cycle. The instance graph of winning dependencies and potential declared-default fallbacks is authoritative. If the cycle survives merging, evaluation fails with [E0607](#e0607).
 
 ### W0703
 

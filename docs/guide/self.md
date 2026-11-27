@@ -147,17 +147,18 @@ release = "testing"
 
 ## Where `self` is allowed
 
-`self` may appear in the right-hand side of an attribute, in a `let` statement inside a body, and in a field default. It may not appear where Stav needs a value before merging starts:
+`self` may appear in the right-hand side of an attribute, in a `let` statement inside a body, and in a struct field default. It may not appear where Stav needs a value before merging starts:
 
 - the condition of an `if` statement and the collection of a `for` statement,
 - block labels, map-literal keys and `include` expressions,
-- the body of a function or a lambda.
+- the body of a function or a lambda,
+- parameter defaults and sum payload defaults.
 
-These decide which contributions exist, or they would let a function depend on where it is called. The restriction also applies through interpolations, function arguments and bindings that read `self`. Map-literal values may still read it.
+These positions decide which contributions exist, or they would let a function depend on where it is called. The restriction also applies through interpolations, function arguments and bindings that read `self`. Map-literal values may still read it. A struct-typed payload field still brings in that struct's field defaults, which may read `self`.
 
-A late whole map, struct or `Data` value may have other contributions at or below its path only when they have strictly higher priority, even through an `Option`. Higher contributions win at their own paths, and the whole supplies everything else. It is never evaluated if higher contributions fully replace it. A declared field default has the lowest priority, so explicit overrides of a late whole default are accepted. A partial literal preserves unmentioned fields or keys. Overriding all fields of a struct makes its whole default unnecessary.
+A late whole map, struct, sum or `Data` value may have other contributions at or below its path only when they have strictly higher priority, including through an `Option`. [E0504](/reference/error-codes#e0504) checks this before any deferred value runs. It excludes all declared defaults at or below the path, and a `none` contribution at the option's own path. Struct and map literals split into children at statically typed paths instead. Literals assigned to `Data` stay whole. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
 
-The rule is checked over static contributions before any deferred value runs. Equal or lower priority competitors report [E0504](/reference/error-codes#e0504). Struct and map literals split into children at statically typed paths. Literals assigned to `Data` stay whole and follow the whole-value rule. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
+Higher contributions win at their own paths. The whole supplies the remaining fields, map keys and matching variant payloads. Declared defaults fill only instances that higher contributions create and no whole value supplies, such as a missing map entry, an option value where the whole returns `none`, or a selected payload of another variant. This applies at every depth, including inside a whole struct. A late whole struct need not run if higher contributions cover every field recursively. A late whole map always runs, because it might supply omitted keys. A tagged-block selection also leaves the whole eligible to run: a matching payload survives, while a different variant is discarded. A higher whole attribute contribution of a sum replaces it instead. [Merging rules](/reference/merging#late-whole-values) gives examples and the full coverage rules.
 
 Using `self` in a structural position is an error:
 
@@ -219,7 +220,7 @@ warning[W0607]: `self` dependencies form a cycle unless something overrides them
   = help: set one of the attributes without `self` at a higher priority
 ```
 
-If both edges win the merge, evaluation fails with `E0607`. This authoritative check uses only winning contributions of each block instance, before resolving its late values:
+If both edges win the merge, evaluation fails with `E0607`. This authoritative check uses winning contributions of each block instance and any potential declared-default fallbacks under late whole values, before resolving late values:
 
 <!-- run: eval cycle.stav -->
 
@@ -332,9 +333,11 @@ tag = "v2.0"
 
 A contribution that loses the merge adds no dependency either. When an overlay sets `url = force("...")` to a constant, the default `url` that read `self.version` is discarded, and so is its dependency on `version`.
 
+Under a late whole value, declared defaults that might fill an instance created by higher contributions add their edges before the whole value runs. The graph includes these edges even if the whole later supplies the instance and the defaults are unused. This applies to missing map entries, option values and selected variant payloads at every depth, recursively through struct fields, including struct-typed payload fields. Consequently, a cycle can be rejected even when one of its default expressions would never run. The graph must be acyclic before the whole value is evaluated, so it cannot wait to find out which fallbacks are needed. A field reached from a whole value through struct fields only is always supplied. Its default never fills the field and adds no fallback edges.
+
 ## How it fits with eager evaluation
 
-Late binding is narrow on purpose. Everything that decides the shape of the value, such as conditions, loops, labels and includes, is evaluated eagerly and cannot read `self`. So the set of contributions is fixed before merging, and only the values of some attributes wait for it. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Evaluation still always terminates.
+Late binding is narrow on purpose. Everything that decides the shape of the value, such as conditions, loops, labels and includes, is evaluated eagerly and cannot read `self`. So the set of contributions is fixed before merging, and only the values of some attributes wait for it. Each winning late value is evaluated once, after the values it reads, along a dependency graph that is known to be acyclic. Potential declared-default fallbacks below late whole values are included in that graph before their use is known. Evaluation still always terminates.
 
 Priorities are decided before deferred values run. A losing deferred value is not evaluated. Struct and map literals split recursively into contributions for each field or key, so only the winning late children run. Eager children still run when the literal is collected, even if another child reads `self`.
 
@@ -395,6 +398,50 @@ error[E0603]: division by zero
 6 │ cfg   = default({ a = 1 / 0, b = self.zero })
   │                         ^
 ```
+
+## Late and eager struct values
+
+A constructor computes a complete struct, including its defaults. When an eager struct value is assigned to an attribute, only the fields explicitly given in its construction become contributions. Its defaulted fields are filled again from the merged instance. A late whole struct cannot use that record of explicit fields, because it is not known before evaluation. Every field in its result counts as given instead.
+
+<!-- file: late-eager-download.stav -->
+
+```stav
+struct Download {
+  version: Str
+  url:     Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+struct Root {
+  version: Str = "1"
+  late:    Download
+  eager:   Download
+}
+
+fn make(version: Str) -> Download = Download { version = version }
+
+late          = make(self.version)
+late.version  = force("9")
+eager         = make("1")
+eager.version = force("9")
+```
+
+<!-- run: eval late-eager-download.stav -->
+
+```json
+{
+  "version": "1",
+  "late": {
+    "version": "9",
+    "url": "https://example.org/tool-1.tar.gz"
+  },
+  "eager": {
+    "version": "9",
+    "url": "https://example.org/tool-9.tar.gz"
+  }
+}
+```
+
+Both versions become `9`. The late whole value keeps the `url` that `make` computed from version `1`. The eager assignment contributes only `version`, so its `url` default runs against the merged version `9`. Declared defaults do not compete with the late whole value for E0504, but they do not replace fields it supplies either.
 
 ## Next
 

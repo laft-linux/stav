@@ -1,6 +1,5 @@
 ---
 source: crates/stav/tests/eval.rs
-assertion_line: 225
 expression: output
 ---
 --- JSON
@@ -9,6 +8,7 @@ expression: output
   "k": 2,
   "m": {
     "x": {
+      "a": 1,
       "b": 2
     },
     "y": {

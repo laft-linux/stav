@@ -914,3 +914,14 @@ fn mutual_signature_refinement_recursion_is_rejected() {
         "{errors}"
     );
 }
+
+#[test]
+fn parameter_defaults_cannot_read_self() {
+    let text = "struct Root { zero: Int = 0 }\n\
+                fn identity(n: Int = self.zero) -> Int = n\n";
+    let fixture = fixture(text);
+    let diagnostics =
+        check(&fixture.host, &fixture.root).expect_err("parameter defaults cannot read self");
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.diagnostic.code).collect();
+    assert_eq!(codes, ["E0606"], "{diagnostics}");
+}

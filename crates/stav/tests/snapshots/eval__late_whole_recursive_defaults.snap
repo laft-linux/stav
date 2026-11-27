@@ -1,0 +1,28 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "key": "x",
+  "cfg": {
+    "downloads": {
+      "tool": {
+        "version": "2",
+        "url": "https://example.org/tool-2.tar.gz"
+      }
+    },
+    "optional": {
+      "version": "3",
+      "url": "https://example.org/tool-3.tar.gz"
+    },
+    "build": {
+      "cargo": {
+        "download": {
+          "version": "4",
+          "url": "https://example.org/tool-4.tar.gz"
+        }
+      }
+    }
+  }
+}

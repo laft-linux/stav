@@ -1160,11 +1160,11 @@ fn late_whole_values_allow_only_higher_priority_contributions() {
 }
 
 #[test]
-fn late_whole_values_reject_lower_priority_declared_defaults() {
+fn late_whole_values_ignore_lower_priority_declared_defaults() {
     let text = "struct Root { n: Int = 1, m: Map<Str, Int> = {} }\n\
                 fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
                 m = make(self.n)\n";
-    assert_late_whole_error(text);
+    assert_eq!(canonical(text).unwrap(), r#"{"m":{"a":1},"n":1}"#);
 }
 
 #[test]
@@ -1248,7 +1248,7 @@ fn nested_higher_late_wholes_do_not_validate_emitted_values() {
             m = default(outer(self.n))\nm.x = inner(self.k)\n"
         );
         let expected = if n == 1 {
-            r#"{"k":2,"m":{"x":{"b":2},"y":{"c":1}},"n":1}"#
+            r#"{"k":2,"m":{"x":{"a":1,"b":2},"y":{"c":1}},"n":1}"#
         } else {
             r#"{"k":2,"m":{"x":{"b":2}},"n":0}"#
         };
@@ -1769,7 +1769,7 @@ fn empty_struct_fields_do_not_vacuously_override_late_wholes() {
 }
 
 #[test]
-fn late_whole_conflicts_take_precedence_over_optional_presence_conflicts() {
+fn optional_none_at_equal_priority_reports_presence_conflicts() {
     for ty in ["Map<Str, Int>", "Item", "Data"] {
         let value = if ty == "Item" {
             "Item { a = n }"
@@ -1782,7 +1782,9 @@ fn late_whole_conflicts_take_precedence_over_optional_presence_conflicts() {
             fn make(n: Int) -> {ty} = {value}\n\
             m = make(self.n)\nm = none\n"
         );
-        assert_late_whole_error(&text);
+        let error = canonical(&text).unwrap_err();
+        assert!(error.contains("E0501"), "{error}");
+        assert!(!error.contains("E0504"), "{error}");
     }
 }
 
@@ -1795,22 +1797,19 @@ fn higher_nested_wholes_keep_omitted_defaults_before_outer_wholes_settle() {
                 m = default(outer(self.n))\nm.x = inner(self.k)\n";
     assert_eq!(
         canonical(text).unwrap(),
-        r#"{"k":2,"m":{"x":{"new":{"a":2,"b":3}}},"n":1}"#
+        r#"{"k":2,"m":{"x":{"new":{"a":2,"b":3},"old":{"a":1,"b":3}}},"n":1}"#
     );
 }
 
 #[test]
-fn fully_overridden_outer_wholes_do_not_suppress_higher_nested_defaults() {
+fn higher_nested_map_does_not_cover_a_failing_outer_whole() {
     let text = "struct Item { a: Int, b: Int = 3 }\n\
                 struct Outer { inner: Map<Str, Item>, n: Int }\n\
                 struct Root { zero: Int = 0, cfg: Outer = outer(self.zero) }\n\
                 fn outer(n: Int) -> Outer = Outer { inner = {}, n = 1 / n }\n\
                 fn inner(k: Int) -> Map<Str, Item> = { new = Item { a = k } }\n\
                 cfg.inner = inner(self.zero)\ncfg.n = 7\n";
-    assert_eq!(
-        canonical(text).unwrap(),
-        r#"{"cfg":{"inner":{"new":{"a":0,"b":3}},"n":7},"zero":0}"#
-    );
+    assert!(canonical(text).unwrap_err().contains("E0603"));
 }
 
 #[test]
@@ -1827,17 +1826,17 @@ fn settling_outer_wholes_reaches_newly_installed_pending_defaults() {
 }
 
 #[test]
-fn enclosing_pending_wholes_do_not_hide_static_declared_default_competitors() {
+fn enclosing_pending_wholes_ignore_declared_default_competitors() {
     let text = "struct Box { m: Map<Str, Int> = {} }\n\
                 struct Root { n: Int = 1, cfg: Box }\n\
                 fn make_box(n: Int) -> Box = Box {}\n\
                 fn make_map(n: Int) -> Map<Str, Int> = { a = n }\n\
                 cfg = default(make_box(self.n))\ncfg.m = make_map(self.n)\n";
-    assert_late_whole_error(text);
+    assert_eq!(canonical(text).unwrap(), r#"{"cfg":{"m":{"a":1}},"n":1}"#);
 }
 
 #[test]
-fn declaration_collection_keeps_eager_default_errors() {
+fn unused_defaults_stay_eager_only_outside_late_wholes() {
     for default in ["{}", "make(self.n)"] {
         let text = format!(
             "fn bad() -> Int = 1 / 0\n\
@@ -1845,8 +1844,12 @@ fn declaration_collection_keeps_eager_default_errors() {
             struct Root {{ n: Int = 1, cfg: Item = {default} }}\n\
             fn make(n: Int) -> Item = Item {{ a = n }}\ncfg.a = 7\n"
         );
-        let error = canonical(&text).expect_err("eager defaults are evaluated during collection");
-        assert!(error.contains("E0603"), "{text}\n{error}");
+        if default == "{}" {
+            let error = canonical(&text).unwrap_err();
+            assert!(error.contains("E0603"), "{error}");
+        } else {
+            assert_eq!(canonical(&text).unwrap(), r#"{"cfg":{"a":7},"n":1}"#);
+        }
     }
 }
 
@@ -1871,7 +1874,7 @@ fn late_whole_sums_reject_equal_or_lower_priority_selections() {
 }
 
 #[test]
-fn late_whole_sums_are_replaced_by_higher_priority_selections() {
+fn higher_priority_sum_selections_still_evaluate_late_wholes() {
     for ty in ["Build", "Option<Build>"] {
         for payload in ["", "features = [\"selected\"]"] {
             let text = format!(
@@ -1881,18 +1884,13 @@ fn late_whole_sums_are_replaced_by_higher_priority_selections() {
                  build = default(failing(self.zero))\n\
                  build cargo {{ {payload} }}\n"
             );
-            let expected = if payload.is_empty() {
-                r#"{"build":{"cargo":{"features":[]}},"zero":0}"#
-            } else {
-                r#"{"build":{"cargo":{"features":["selected"]}},"zero":0}"#
-            };
-            assert_eq!(canonical(&text).expect(&text), expected);
+            assert!(canonical(&text).unwrap_err().contains("E0603"));
         }
     }
 }
 
 #[test]
-fn late_whole_sum_declared_defaults_are_replaced_by_blocks() {
+fn sum_blocks_still_evaluate_late_declared_wholes() {
     for ty in ["Build", "Option<Build>"] {
         let text = format!(
             "type Build = | cargo(features: List<Str> = []) | meson(options: List<Str> = [])\n\
@@ -1900,25 +1898,19 @@ fn late_whole_sum_declared_defaults_are_replaced_by_blocks() {
              fn failing(n: Int) -> Build = meson(options = [\"#{{1 / n}}\"])\n\
              build cargo {{}}\n"
         );
-        assert_eq!(
-            canonical(&text).expect(&text),
-            r#"{"build":{"cargo":{"features":[]}},"zero":0}"#,
-        );
+        assert!(canonical(&text).unwrap_err().contains("E0603"));
     }
 }
 
 #[test]
-fn replaced_late_whole_sums_do_not_add_dependency_edges() {
+fn selected_late_whole_sums_keep_dependency_edges() {
     let text = r#"
         type Build = | cargo(features: List<Str> = []) | meson(options: List<Str> = [])
         struct Root { flag: Bool = self.build == cargo(), build: Build }
         build = default(if self.flag { meson() } else { cargo() })
         build cargo {}
     "#;
-    assert_eq!(
-        canonical(text).expect("the losing sum cannot cause a cycle"),
-        r#"{"build":{"cargo":{"features":[]}},"flag":true}"#,
-    );
+    assert!(canonical(text).unwrap_err().contains("E0607"));
 }
 
 #[test]
@@ -1931,10 +1923,7 @@ fn late_whole_sums_exclude_nested_implicit_defaults_from_competitors() {
         value = default(failing(self.zero))
         value outer { child inner {} }
     "#;
-    assert_eq!(
-        canonical(text).expect("the nested payload keeps its implicit default"),
-        r#"{"value":{"outer":{"child":{"inner":{"x":1}}}},"zero":0}"#,
-    );
+    assert!(canonical(text).unwrap_err().contains("E0603"));
 }
 
 #[test]
@@ -1954,27 +1943,32 @@ fn sum_selections_do_not_replace_enclosing_whole_structs() {
 }
 
 #[test]
-fn late_whole_sum_payload_fields_still_validate_their_declared_defaults() {
-    assert_late_whole_error(
+fn late_whole_sum_payload_fields_ignore_their_declared_defaults() {
+    let value = canonical(
         r#"
             type Build = cargo(settings: Map<Str, Int> = {})
             struct Root { n: Int = 1, build: Build }
             fn make(n: Int) -> Map<Str, Int> = { a = n }
             build cargo { settings = make(self.n) }
         "#,
-    );
+    )
+    .unwrap();
+    assert_eq!(value, r#"{"build":{"cargo":{"settings":{"a":1}}},"n":1}"#);
 }
 
 #[test]
-fn optional_late_whole_sums_report_static_conflicts_before_presence_conflicts() {
-    assert_late_whole_error(
+fn optional_late_whole_sums_ignore_none_for_static_validation() {
+    let error = canonical(
         r#"
             type Build = cargo
             struct Root { flag: Bool = false, build: Option<Build> }
             build = if self.flag { cargo } else { none }
             build = none
         "#,
-    );
+    )
+    .unwrap_err();
+    assert!(error.contains("E0501"), "{error}");
+    assert!(!error.contains("E0504"), "{error}");
 }
 
 #[test]
@@ -1987,15 +1981,12 @@ fn late_whole_sums_preserve_defaults_inside_selected_payload_structs() {
         build = default(failing(self.zero))
         build cargo { inner {} }
     "#;
-    assert_eq!(
-        canonical(text).expect("the selected payload installs its own defaults"),
-        r#"{"build":{"cargo":{"inner":{"a":2,"b":2}}},"zero":0}"#,
-    );
+    assert!(canonical(text).unwrap_err().contains("E0603"));
 }
 
 #[test]
-fn suspended_sum_defaults_keep_their_payload_competitors() {
-    assert_late_whole_error(
+fn suspended_sum_defaults_are_not_payload_competitors() {
+    let error = canonical(
         r#"
             type Choice = one(settings: Map<Str, Int>)
             struct Box { choice: Choice = one(settings = {}) }
@@ -2005,5 +1996,8 @@ fn suspended_sum_defaults_keep_their_payload_competitors() {
             cfg = default(make_box(self.zero))
             cfg { choice one { settings = failing(self.zero) } }
         "#,
-    );
+    )
+    .unwrap_err();
+    assert!(error.contains("E0603"), "{error}");
+    assert!(!error.contains("E0504"), "{error}");
 }

@@ -109,8 +109,8 @@ struct Node {
     depth: u32,
     children: BTreeMap<Seg, NodeId>,
     contribs: Vec<u32>,
-    /// Suspended default ids paired with their declaring struct instance.
-    checks: Vec<(u32, NodeId)>,
+    /// Declared defaults retained for the static dependency graph.
+    checks: Vec<u32>,
     ty: TypeId,
     shape: Shape,
     winners: Vec<u32>,
@@ -118,10 +118,10 @@ struct Node {
     /// which must be evaluated before anything inside it is final.
     pending: Vec<u32>,
     defaults: bool,
-    /// Whether validation-only defaults for this instance were collected.
+    /// Whether possible fallback defaults were registered for this instance.
     checked_defaults: bool,
-    /// The static whole value whose priority masks generated contributions.
-    whole: Option<u32>,
+    /// Whether a late whole value was registered here before evaluation.
+    late_whole: bool,
     state: State,
 }
 
@@ -140,7 +140,7 @@ impl Node {
             pending: Vec::new(),
             defaults: false,
             checked_defaults: false,
-            whole: None,
+            late_whole: false,
             state: State::Open,
         }
     }
@@ -151,8 +151,8 @@ impl Node {
 pub(crate) struct Merge {
     pub(crate) contribs: Vec<Contrib>,
     nodes: Vec<Node>,
-    /// Declaring instances of active implicit defaults.
-    default_owners: BTreeMap<u32, NodeId>,
+    /// Attribute values expanded into sum selections, distinct from blocks.
+    attributes: BTreeSet<u32>,
     /// Whether static whole validation has completed.
     static_checked: bool,
 }
@@ -193,72 +193,31 @@ impl Merge {
         n
     }
 
-    fn insert_default(&mut self, base: NodeId, path: &[Seg], contrib: Contrib, owner: NodeId) {
-        let id = u32::try_from(self.contribs.len()).unwrap_or(u32::MAX);
-        self.insert(base, path, contrib);
-        self.default_owners.insert(id, owner);
-    }
-
-    /// Records an implicit default for validation without making it a winner.
-    fn insert_check(&mut self, base: NodeId, path: &[Seg], contrib: Contrib, owner: NodeId) {
+    /// Records a possible fallback without evaluating or selecting it.
+    fn insert_check(&mut self, base: NodeId, path: &[Seg], contrib: Contrib) {
         let mut n = base;
         for seg in path {
             n = self.child_or_new(n, seg.clone());
         }
         let id = u32::try_from(self.contribs.len()).unwrap_or(u32::MAX);
         self.contribs.push(contrib);
-        self.node_mut(n).checks.push((id, owner));
+        self.node_mut(n).checks.push(id);
     }
 
-    /// Whether `ancestor` encloses `n`, excluding `n` itself.
-    fn encloses(&self, ancestor: NodeId, n: NodeId) -> bool {
-        let mut current = self.node(n).parent;
-        while let Some(c) = current {
-            if c == ancestor {
-                return true;
-            }
-            current = self.node(c).parent;
-        }
-        false
-    }
-
-    /// Returns contributions at `n`, including suspended field defaults.
-    /// Every suspended entry here belongs to an enclosing instance.
-    fn static_at(&self, n: NodeId) -> Vec<u32> {
-        let node = self.node(n);
-        node.contribs
-            .iter()
-            .copied()
-            .chain(node.checks.iter().map(|&(id, _)| id))
-            .collect()
-    }
-
-    /// Includes implicit defaults only when their declaring instance
-    /// encloses `n`. Defaults owned by `n` or its descendants are internal
-    /// fallbacks of its whole value, not competitors of that value.
-    fn static_below(&self, n: NodeId) -> Vec<u32> {
-        let mut ids: Vec<u32> = self
-            .below(n)
-            .into_iter()
-            .filter(|id| {
-                self.default_owners
-                    .get(id)
-                    .is_none_or(|&owner| self.encloses(owner, n))
-            })
-            .collect();
+    /// Returns suspended defaults under `n`, excluding `n` itself.
+    fn checks_below(&self, n: NodeId) -> Vec<u32> {
+        let mut checks = Vec::new();
         let mut stack: Vec<NodeId> = self.node(n).children.values().copied().collect();
         while let Some(c) = stack.pop() {
             let node = self.node(c);
-            ids.extend(
-                node.checks
-                    .iter()
-                    .filter(|(_, owner)| self.encloses(*owner, n))
-                    .map(|&(id, _)| id),
-            );
+            checks.extend(node.checks.iter().copied());
             stack.extend(node.children.values().copied());
         }
-        ids.sort_unstable();
-        ids
+        checks
+    }
+
+    fn static_at(&self, n: NodeId) -> Vec<u32> {
+        self.node(n).contribs.clone()
     }
 
     fn path(&self, n: NodeId) -> Vec<Seg> {
@@ -397,7 +356,12 @@ impl<'c> Eval<'c> {
                 || node
                     .winners
                     .iter()
-                    .any(|&id| matches!(self.merge.contrib(id).kind, Kind::Deferred(_)));
+                    .any(|&id| matches!(self.merge.contrib(id).kind, Kind::Deferred(_)))
+                || !node.checks.is_empty()
+                    && node
+                        .parent
+                        .is_some_and(|owner| self.potential_fallback(owner))
+                    && !self.covered(n, Prio::Declared);
             if deferred {
                 self.finalize(n)?;
             }
@@ -466,6 +430,16 @@ impl<'c> Eval<'c> {
         let types = &self.c.types;
         let option = types.unwrap_option(ty).is_some();
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
+        if matches!(
+            types.get(inner),
+            Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
+        ) {
+            let node = self.merge.node(n);
+            let late_whole = node.contribs.iter().chain(&node.checks).any(|&id| {
+                matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if !d.reads.is_empty())
+            });
+            self.merge.node_mut(n).late_whole |= late_whole;
+        }
         if option {
             match self.presence(n) {
                 Presence::Absent => {
@@ -498,7 +472,11 @@ impl<'c> Eval<'c> {
             .collect();
         match self.c.types.get(inner).clone() {
             Type::Struct(s) => {
-                if !option && n != NodeId::ROOT && !self.merge.is_set(n) {
+                if !option
+                    && n != NodeId::ROOT
+                    && !self.merge.is_set(n)
+                    && (self.merge.static_checked || self.merge.node(n).checks.is_empty())
+                {
                     self.merge.node_mut(n).shape = Shape::Unset;
                     return Ok(());
                 }
@@ -522,7 +500,10 @@ impl<'c> Eval<'c> {
                 }
             }
             Type::Map(k, v) => {
-                if !option && !self.merge.is_set(n) {
+                if !option
+                    && !self.merge.is_set(n)
+                    && (self.merge.static_checked || self.merge.node(n).checks.is_empty())
+                {
                     self.merge.node_mut(n).shape = Shape::Unset;
                     return Ok(());
                 }
@@ -580,12 +561,6 @@ impl<'c> Eval<'c> {
             .types
             .unwrap_option(ty)
             .unwrap_or_else(|| self.c.types.peel(ty));
-        if let Type::Sum(s) = self.c.types.get(inner) {
-            let s = *s;
-            for (id, owner) in self.merge.node(n).checks.clone() {
-                self.expand_sum_payload(n, s, id, Some(owner));
-            }
-        }
         if matches!(
             self.c.types.get(inner),
             Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
@@ -593,11 +568,11 @@ impl<'c> Eval<'c> {
             if let Some(ids) = self.whole_conflict(n) {
                 self.conflict(n, &ids, "E0504");
             } else {
-                self.merge.node_mut(n).whole = self
+                self.merge.node_mut(n).late_whole |= self
                     .merge
                     .static_at(n)
                     .into_iter()
-                    .find(|&id| matches!(self.merge.contrib(id).kind, Kind::Deferred(_)));
+                    .any(|id| matches!(self.merge.contrib(id).kind, Kind::Deferred(_)));
             }
         }
         let children: Vec<(Seg, NodeId)> = self
@@ -658,9 +633,13 @@ impl<'c> Eval<'c> {
             let mut competitors: Vec<u32> = at
                 .iter()
                 .copied()
-                .chain(self.merge.static_below(n))
+                .chain(self.merge.below(n))
                 .filter(|&other| {
                     other != id
+                        && self.merge.contrib(other).prio != Prio::Declared
+                        && !(self.c.types.unwrap_option(self.merge.node(n).ty).is_some()
+                            && at.contains(&other)
+                            && matches!(self.merge.contrib(other).kind, Kind::Value(Val::None)))
                         && self.merge.contrib(other).prio <= contrib.prio
                         && !matches!(self.merge.contrib(other).kind, Kind::Spent)
                 })
@@ -681,13 +660,14 @@ impl<'c> Eval<'c> {
         let mut current = Some(n);
         while let Some(c) = current {
             let node = self.merge.node(c);
-            if matches!(node.shape, Shape::Struct(_) | Shape::Map(_))
-                && node.pending.iter().any(|&id| {
-                    !self.merge.static_checked
-                        || c == n
-                        || !self.covered_path(c, n, self.merge.contrib(id).prio)
-                })
-            {
+            if matches!(
+                node.shape,
+                Shape::Struct(_) | Shape::Map(_) | Shape::Tagged(_)
+            ) && node.pending.iter().any(|&id| {
+                !self.merge.static_checked
+                    || c == n
+                    || !self.covered_path(c, n, self.merge.contrib(id).prio)
+            }) {
                 return true;
             }
             current = node.parent;
@@ -700,12 +680,6 @@ impl<'c> Eval<'c> {
     /// struct fields. All struct fields can be covered independently.
     fn covered(&self, n: NodeId, priority: Prio) -> bool {
         let node = self.merge.node(n);
-        if node
-            .whole
-            .is_some_and(|id| self.merge.contrib(id).prio > priority)
-        {
-            return true;
-        }
         let option = self.c.types.unwrap_option(node.ty);
         if option.is_some() && matches!(self.presence(n), Presence::Absent) {
             return node.contribs.iter().any(|&id| {
@@ -718,7 +692,19 @@ impl<'c> Eval<'c> {
             c.prio > priority
                 && match &c.kind {
                     Kind::Value(value) => !value.is_none(),
-                    Kind::Deferred(_) => true,
+                    Kind::Deferred(_) => !matches!(
+                        self.c.types.get(
+                            self.c
+                                .types
+                                .unwrap_option(node.ty)
+                                .unwrap_or_else(|| self.c.types.peel(node.ty))
+                        ),
+                        Type::Map(_, _)
+                    ),
+                    Kind::Present => {
+                        c.complete && matches!(node.shape, Shape::Struct(_) | Shape::Payload(..))
+                    }
+                    Kind::Select(_) => self.merge.attributes.contains(&id),
                     _ => false,
                 }
         }) {
@@ -745,14 +731,6 @@ impl<'c> Eval<'c> {
     /// Whether a higher static contribution between `base` and `n`
     /// makes `n` independent of the whole value at `base`.
     fn covered_path(&self, base: NodeId, n: NodeId, priority: Prio) -> bool {
-        // A selection replaces a late sum at its own path, not a sum
-        // value emitted as part of an enclosing whole.
-        if self.merge.node(base).contribs.iter().any(|&id| {
-            let c = self.merge.contrib(id);
-            c.prio > priority && matches!(c.kind, Kind::Select(_))
-        }) {
-            return true;
-        }
         let mut current = Some(n);
         while let Some(c) = current {
             if self.covered(c, priority) {
@@ -766,24 +744,76 @@ impl<'c> Eval<'c> {
         false
     }
 
-    /// Drops generated paths masked by a higher static whole, even when
-    /// that whole does not produce a value at the generated path.
+    /// Adds a whole value's supplied parts without replacing missing map keys.
     fn insert_generated(&mut self, base: NodeId, pending: Pending) {
         let mut n = base;
-        let mut path = pending.path.iter();
-        loop {
-            if self
-                .merge
-                .node(n)
-                .whole
-                .is_some_and(|id| self.merge.contrib(id).prio > pending.contrib.prio)
-            {
+        for seg in &pending.path {
+            if self.covered(n, pending.contrib.prio) {
                 return;
             }
-            let Some(seg) = path.next() else { break };
             n = self.merge.child_or_new(n, seg.clone());
         }
+        if self.covered(n, pending.contrib.prio) {
+            return;
+        }
+        let node = self.merge.node(n);
+        let inner = self
+            .c
+            .types
+            .unwrap_option(node.ty)
+            .unwrap_or_else(|| self.c.types.peel(node.ty));
+        if pending.contrib.complete
+            && matches!(pending.contrib.kind, Kind::Present)
+            && (self.c.types.as_struct(inner).is_some() || matches!(node.shape, Shape::Payload(..)))
+        {
+            let ids: Vec<u32> = node
+                .contribs
+                .iter()
+                .copied()
+                .chain(self.merge.below(n))
+                .collect();
+            for id in ids {
+                if self.merge.contrib(id).prio < pending.contrib.prio {
+                    self.merge.contribs[id as usize].kind = Kind::Spent;
+                }
+            }
+        }
         self.merge.insert(n, &[], pending.contrib);
+    }
+
+    /// Whether a whole value has supplied this complete struct instance.
+    fn supplied(&self, n: NodeId) -> bool {
+        self.merge.node(n).contribs.iter().any(|id| {
+            let c = self.merge.contrib(*id);
+            c.complete && matches!(c.kind, Kind::Present)
+        })
+    }
+
+    fn late_scope(&self, n: NodeId) -> bool {
+        let mut current = Some(n);
+        while let Some(c) = current {
+            if self.merge.node(c).late_whole {
+                return true;
+            }
+            current = self.merge.node(c).parent;
+        }
+        false
+    }
+
+    /// Whether a whole value may lack the instance owning a fallback.
+    fn potential_fallback(&self, n: NodeId) -> bool {
+        let mut current = Some(n);
+        let mut missing_instance = false;
+        while let Some(c) = current {
+            let node = self.merge.node(c);
+            missing_instance |= self.c.types.unwrap_option(node.ty).is_some();
+            if node.late_whole {
+                return missing_instance;
+            }
+            missing_instance |= matches!(node.seg, Some(Seg::Key(_) | Seg::Variant(_)));
+            current = node.parent;
+        }
+        false
     }
 
     fn has_selection(&self, n: NodeId) -> bool {
@@ -801,7 +831,9 @@ impl<'c> Eval<'c> {
         let merge = &self.merge;
         let mut none: Vec<u32> = Vec::new();
         let mut present: Vec<u32> = Vec::new();
-        for &id in &merge.node(n).contribs {
+        let node = merge.node(n);
+        let checks = node.checks.iter().filter(|_| !merge.static_checked);
+        for &id in node.contribs.iter().chain(checks) {
             match merge.contrib(id).kind {
                 Kind::Value(Val::None) => none.push(id),
                 Kind::Spent => {}
@@ -809,6 +841,9 @@ impl<'c> Eval<'c> {
             }
         }
         present.extend(merge.below(n));
+        if !merge.static_checked {
+            present.extend(merge.checks_below(n));
+        }
         let top = |ids: &[u32]| ids.iter().map(|&id| merge.contrib(id).prio).max();
         match (top(&none), top(&present)) {
             (_, None) => Presence::Absent,
@@ -827,9 +862,12 @@ impl<'c> Eval<'c> {
         }
     }
 
-    /// Collects a struct instance's defaults once for validation or merging.
+    /// Registers an instance's possible fallbacks or installs its defaults.
     /// A field that an enclosing default already sets keeps that value.
     fn add_defaults(&mut self, n: NodeId, s: StructId, validation_only: bool) -> R<()> {
+        if validation_only && !self.potential_fallback(n) || !validation_only && self.supplied(n) {
+            return Ok(());
+        }
         let node = self.merge.node_mut(n);
         let installed = if validation_only {
             &mut node.checked_defaults
@@ -847,13 +885,12 @@ impl<'c> Eval<'c> {
         for (i, field) in def.fields.iter().enumerate() {
             let Some(node) = field.default else { continue };
             let child = self.merge.child_or_new(n, field_seg(i));
-            if self
-                .merge
-                .node(child)
-                .contribs
-                .iter()
-                .any(|&id| self.merge.contrib(id).prio == Prio::Declared)
-                || validation_only && !self.merge.node(child).checks.is_empty()
+            if validation_only && !self.merge.node(child).checks.is_empty()
+                || !validation_only
+                    && self.merge.node(child).contribs.iter().any(|&id| {
+                        let c = self.merge.contrib(id);
+                        c.prio == Prio::Declared && !matches!(c.kind, Kind::Spent)
+                    })
             {
                 continue;
             }
@@ -866,17 +903,32 @@ impl<'c> Eval<'c> {
                 via: None,
                 seq: 0,
                 parts: None,
+                complete: false,
             };
             let reads = self.default_reads(s, i);
-            if reads.is_empty() {
-                for p in self.field_default(s, i, unit, field.ty, &template)?.iter() {
+            if validation_only || self.late_scope(n) {
+                let body = Body {
+                    unit,
+                    file,
+                    base: Vec::new(),
+                    frames: vec![self.merge.path(n)],
+                    env: Env::default(),
+                    via: None,
+                    defer_values: true,
+                };
+                let e = self.expr_at(unit, node)?;
+                let mut out = Vec::new();
+                self.contribute(&body, Vec::new(), field.ty, e, &template, &mut out)?;
+                for p in out {
                     if validation_only {
-                        self.merge
-                            .insert_check(child, &p.path, p.contrib.clone(), n);
+                        self.merge.insert_check(child, &p.path, p.contrib);
                     } else {
-                        self.merge
-                            .insert_default(child, &p.path, p.contrib.clone(), n);
+                        self.merge.insert(child, &p.path, p.contrib);
                     }
+                }
+            } else if reads.is_empty() {
+                for p in self.field_default(s, i, unit, field.ty, &template)?.iter() {
+                    self.merge.insert(child, &p.path, p.contrib.clone());
                 }
             } else {
                 let body = Body {
@@ -886,16 +938,13 @@ impl<'c> Eval<'c> {
                     frames: vec![self.merge.path(n)],
                     env: Env::default(),
                     via: None,
+                    defer_values: false,
                 };
                 let e = self.expr_at(unit, node)?;
                 let mut out = Vec::new();
                 self.contribute(&body, Vec::new(), field.ty, e, &template, &mut out)?;
                 for p in out {
-                    if validation_only {
-                        self.merge.insert_check(child, &p.path, p.contrib, n);
-                    } else {
-                        self.merge.insert_default(child, &p.path, p.contrib, n);
-                    }
+                    self.merge.insert(child, &p.path, p.contrib);
                 }
             }
         }
@@ -933,6 +982,7 @@ impl<'c> Eval<'c> {
             env: Env::default(),
             frames: Vec::new(),
             via: None,
+            defer_values: false,
         };
         let mut out = Vec::new();
         self.contribute(&body, Vec::new(), ty, e, template, &mut out)?;
@@ -941,8 +991,8 @@ impl<'c> Eval<'c> {
         Ok(out)
     }
 
-    /// Expands sum payloads without activating suspended defaults as winners.
-    fn expand_sum_payload(&mut self, n: NodeId, s: SumId, id: u32, check_owner: Option<NodeId>) {
+    /// Expands an attribute sum value into its selection and payload.
+    fn expand_sum_payload(&mut self, n: NodeId, s: SumId, id: u32) {
         let contrib = self.merge.contrib(id).clone();
         let Kind::Value(value) = &contrib.kind else {
             return;
@@ -953,6 +1003,7 @@ impl<'c> Eval<'c> {
             _ => return,
         };
         self.merge.contribs[id as usize].kind = Kind::Select(variant);
+        self.merge.attributes.insert(id);
         let params: Vec<(String, TypeId)> = self
             .c
             .types
@@ -964,20 +1015,23 @@ impl<'c> Eval<'c> {
             .unwrap_or_default();
         let payload = self.merge.child_or_new(n, Seg::Variant(variant));
         let template = contrib.payload();
+        let complete = contrib.complete;
         let mut out = Vec::new();
+        if complete {
+            out.push(Pending {
+                path: Vec::new(),
+                contrib: template.with(Kind::Present),
+            });
+        }
         for (i, ((name, ty), value)) in params.into_iter().zip(fields).enumerate() {
-            if set.get(i).copied().unwrap_or(true) {
+            if complete || set.get(i).copied().unwrap_or(true) {
                 let template = template.part(&name);
                 self.decompose(vec![field_seg(i)], ty, value, &template, &mut out);
             }
         }
-        let owner = self.merge.default_owners.get(&id).copied();
         for p in out {
-            if let Some(owner) = check_owner {
-                self.merge.insert_check(payload, &p.path, p.contrib, owner);
-            } else if let Some(owner) = owner {
-                self.merge
-                    .insert_default(payload, &p.path, p.contrib, owner);
+            if complete {
+                self.insert_generated(payload, p);
             } else {
                 self.merge.insert(payload, &p.path, p.contrib);
             }
@@ -989,7 +1043,7 @@ impl<'c> Eval<'c> {
     fn tagged(&mut self, n: NodeId, s: SumId, deferred: Vec<u32>) -> R<()> {
         let ids = self.merge.node(n).contribs.clone();
         for id in ids {
-            self.expand_sum_payload(n, s, id, None);
+            self.expand_sum_payload(n, s, id);
         }
         let selections: Vec<u32> = self
             .merge
@@ -1052,42 +1106,67 @@ impl<'c> Eval<'c> {
             .and_then(|v| v.fields.as_ref())
             .map(|f| f.iter().map(|p| p.ty).collect())
             .unwrap_or_default();
-        if !std::mem::replace(&mut self.merge.node_mut(n).defaults, true) {
-            for (i, &ty) in params.iter().enumerate() {
-                let child = self.merge.child_or_new(n, field_seg(i));
-                if self
-                    .merge
-                    .node(child)
-                    .contribs
-                    .iter()
-                    .any(|&id| self.merge.contrib(id).prio == Prio::Declared)
-                {
-                    continue;
-                }
-                let Some(value) = self.payload_default(s, variant as usize, i)? else {
-                    continue;
-                };
-                let def = self.c.types.sum(s);
-                let default = def
-                    .variants
-                    .get(variant as usize)
-                    .and_then(|v| v.fields.as_ref()?.get(i)?.default);
-                let span = default
-                    .and_then(|node| self.tree(def.file).node(node))
-                    .map_or(def.span, |e| e.span());
-                let template = Contrib {
-                    prio: Prio::Declared,
-                    kind: Kind::Present,
-                    file: def.file,
-                    span,
-                    via: None,
-                    seq: 0,
-                    parts: None,
-                };
-                let mut out = Vec::new();
-                self.decompose(Vec::new(), ty, value, &template, &mut out);
-                for p in out {
-                    self.merge.insert_default(child, &p.path, p.contrib, n);
+        let waiting = self.enclosing_whole_pending(n);
+        if !self.supplied(n)
+            && (!waiting || !self.merge.static_checked && self.potential_fallback(n))
+        {
+            let node = self.merge.node_mut(n);
+            let installed = if waiting {
+                &mut node.checked_defaults
+            } else {
+                &mut node.defaults
+            };
+            if !std::mem::replace(installed, true) {
+                for (i, &ty) in params.iter().enumerate() {
+                    let child = self.merge.child_or_new(n, field_seg(i));
+                    let def = self.c.types.sum(s);
+                    let default = def
+                        .variants
+                        .get(variant as usize)
+                        .and_then(|v| v.fields.as_ref()?.get(i)?.default);
+                    let Some(default) = default else { continue };
+                    let file = def.file;
+                    let span = self.tree(file).node(default).map_or(def.span, |e| e.span());
+                    let template = Contrib {
+                        prio: Prio::Declared,
+                        kind: Kind::Present,
+                        file,
+                        span,
+                        via: None,
+                        seq: 0,
+                        parts: None,
+                        complete: false,
+                    };
+                    if waiting || self.late_scope(n) {
+                        let Some(unit) = self.file_unit(file) else {
+                            return Err(self.bug(file, span, "a declaration has no unit"));
+                        };
+                        let body = Body {
+                            unit,
+                            file,
+                            base: Vec::new(),
+                            frames: Vec::new(),
+                            env: Env::default(),
+                            via: None,
+                            defer_values: true,
+                        };
+                        let e = self.expr_at(unit, default)?;
+                        let mut out = Vec::new();
+                        self.contribute(&body, Vec::new(), ty, e, &template, &mut out)?;
+                        for p in out {
+                            if waiting {
+                                self.merge.insert_check(child, &p.path, p.contrib);
+                            } else {
+                                self.merge.insert(child, &p.path, p.contrib);
+                            }
+                        }
+                    } else if let Some(value) = self.payload_default(s, variant as usize, i)? {
+                        let mut out = Vec::new();
+                        self.decompose(Vec::new(), ty, value, &template, &mut out);
+                        for p in out {
+                            self.merge.insert(child, &p.path, p.contrib);
+                        }
+                    }
                 }
             }
         }
@@ -1144,7 +1223,8 @@ impl<'c> Eval<'c> {
         self.settle(n)?;
         let at = self.node_at(n);
         match self.merge.node(n).shape.clone() {
-            Shape::Open | Shape::Absent | Shape::Unset => Ok(None),
+            Shape::Open | Shape::Unset => Ok(None),
+            Shape::Absent => Ok(self.merge.is_set(n).then_some(Val::None)),
             Shape::Conflict => Ok(Some(Val::None)),
             Shape::Struct(s) => {
                 let count = self.c.types.structure(s).fields.len();
@@ -1277,24 +1357,43 @@ impl<'c> Eval<'c> {
                 current = self.merge.node(c).parent;
             }
             let Some(c) = outermost else { return Ok(()) };
-            let pending = std::mem::take(&mut self.merge.node_mut(c).pending);
+            let mut pending = std::mem::take(&mut self.merge.node_mut(c).pending);
+            pending.sort_by_key(|&id| std::cmp::Reverse(self.merge.contrib(id).prio));
             for id in pending {
                 let contrib = self.merge.contrib(id).clone();
-                let Kind::Deferred(deferred) = &contrib.kind else {
-                    continue;
-                };
-                let out = self.run_deferred(deferred, &contrib)?;
-                self.merge.contribs[id as usize].kind = Kind::Spent;
-                for p in out {
-                    self.insert_generated(c, p);
+                if self.covered(c, contrib.prio) {
+                    self.merge.contribs[id as usize].kind = Kind::Spent;
+                } else if let Kind::Deferred(deferred) = &contrib.kind {
+                    let out = self.run_deferred(deferred, &contrib)?;
+                    self.merge.contribs[id as usize].kind = Kind::Spent;
+                    for p in out {
+                        if p.path.is_empty()
+                            && matches!(p.contrib.kind, Kind::Value(Val::None))
+                            && self.c.types.unwrap_option(self.merge.node(c).ty).is_some()
+                        {
+                            let ids = self
+                                .merge
+                                .node(c)
+                                .contribs
+                                .iter()
+                                .copied()
+                                .chain(self.merge.below(c))
+                                .collect::<Vec<_>>();
+                            for other in ids {
+                                if self.merge.contrib(other).prio <= contrib.prio {
+                                    self.merge.contribs[other as usize].kind = Kind::Spent;
+                                }
+                            }
+                        }
+                        self.insert_generated(c, p);
+                    }
+                }
+                let ty = self.merge.node(c).ty;
+                match self.merge.node(c).shape {
+                    Shape::Payload(s, v) => self.payload(c, s, v)?,
+                    _ => self.structure(c, ty)?,
                 }
             }
-            let ty = self.merge.node(c).ty;
-            match self.merge.node(c).shape {
-                Shape::Payload(s, v) => self.payload(c, s, v)?,
-                _ => self.structure(c, ty)?,
-            }
-            self.check_cycles(c)?;
         }
     }
 
@@ -1676,7 +1775,14 @@ impl<'c> Eval<'c> {
                 }
             }
             let node = self.merge.node(n);
-            let leaf_deferred = node.winners.iter().copied();
+            let mut leaf_deferred = node.winners.clone();
+            if node
+                .parent
+                .is_some_and(|owner| self.potential_fallback(owner))
+                && !self.covered(n, Prio::Declared)
+            {
+                leaf_deferred.extend(node.checks.iter().copied());
+            }
             let structural: Vec<u32> = node.pending.clone();
             for id in leaf_deferred {
                 for target in self.read_targets(id) {

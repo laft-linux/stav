@@ -1,10 +1,10 @@
 #! render json toml yaml
 type Build =
-  | cargo(features: List<Str> = [])
+  | cargo(features: List<Str> = [], bins: List<Str> = [])
   | meson(options: List<Str> = [])
 
-struct Root { zero: Int = 0, build: Build = failing(self.zero) }
+struct Root { key: Str = "x", build: Build = make(self.key) }
 
-fn failing(n: Int) -> Build = meson(options = ["#{1 / n}"])
+fn make(key: Str) -> Build = cargo(features = ["old"], bins = [key])
 
-build cargo { }
+build cargo { features = ["selected"] }

@@ -1,0 +1,13 @@
+struct Download {
+  version: Str
+  url:     Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+struct Root { version: Str = "1", late: Download, eager: Download }
+
+fn make(version: Str) -> Download = Download { version = version }
+
+late          = make(self.version)
+late.version  = force("9")
+eager         = make("1")
+eager.version = force("9")

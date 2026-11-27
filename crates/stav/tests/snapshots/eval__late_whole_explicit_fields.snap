@@ -1,0 +1,16 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "version": "1",
+  "late": {
+    "version": "9",
+    "url": "https://example.org/tool-1.tar.gz"
+  },
+  "eager": {
+    "version": "9",
+    "url": "https://example.org/tool-9.tar.gz"
+  }
+}

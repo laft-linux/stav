@@ -112,6 +112,8 @@ pub(crate) struct Contrib {
     /// Where the parts of the contribution's value were written, when a
     /// literal built it, for the spans of the attributes inside the value.
     pub(crate) parts: Option<Rc<Parts>>,
+    /// Whether every field of the value was supplied by a late whole.
+    pub(crate) complete: bool,
 }
 
 /// One part of a value that a literal wrote.
@@ -265,6 +267,8 @@ pub(crate) struct Body {
     pub(crate) frames: Vec<Vec<Seg>>,
     pub(crate) env: super::env::Env,
     pub(crate) via: Option<Rc<Vec<SourceSpan>>>,
+    /// Keeps fallback literal children unevaluated until they fill a field.
+    pub(crate) defer_values: bool,
 }
 
 impl Body {
@@ -286,6 +290,7 @@ impl Body {
             via: self.via.clone(),
             seq: 0,
             parts: None,
+            complete: false,
         }
     }
 }
@@ -307,6 +312,7 @@ impl<'c> Eval<'c> {
                 frames: vec![Vec::new()],
                 env: Env::default(),
                 via: None,
+                defer_values: false,
             };
             let statements = self
                 .c
@@ -346,6 +352,7 @@ impl<'c> Eval<'c> {
             base,
             env: Env::default(),
             via,
+            defer_values: false,
         };
         let statements = self
             .c
@@ -534,7 +541,15 @@ impl<'c> Eval<'c> {
                 }
                 Ok(())
             }
-            (Expr::Map(map), Type::Map(_, value_ty)) => {
+            (Expr::Map(map), Type::Map(_, value_ty))
+                if !body.defer_values
+                    || map.entries().all(|entry| {
+                        entry.key().is_some_and(|key| match key {
+                            Key::Name(_) => true,
+                            Key::Str(string) => string.value().is_some(),
+                        })
+                    }) =>
+            {
                 let mut keys = BTreeSet::new();
                 out.push(Pending {
                     path: path.clone(),
@@ -570,7 +585,16 @@ impl<'c> Eval<'c> {
                         ));
                     }
                 };
-                if !reads.is_empty() {
+                if body.defer_values
+                    && matches!(e, Expr::Literal(literal) if literal.kind() == Some(ast::LiteralKind::None))
+                {
+                    out.push(Pending {
+                        path,
+                        contrib: template.with(Kind::Value(Val::None)),
+                    });
+                    return Ok(());
+                }
+                if body.defer_values || !reads.is_empty() {
                     let deferred = Deferred {
                         unit: body.unit,
                         node: e.syntax().index(),
@@ -618,7 +642,7 @@ impl<'c> Eval<'c> {
                 });
                 let def = types.structure(*s);
                 for (i, (field, val)) in def.fields.iter().zip(&v.fields).enumerate() {
-                    if !v.set.get(i).copied().unwrap_or(true) {
+                    if !template.complete && !v.set.get(i).copied().unwrap_or(true) {
                         continue;
                     }
                     let mut sub = path.clone();
@@ -896,6 +920,7 @@ impl<'c> Eval<'c> {
             frames: vec![Vec::new()],
             env: cx.env.clone(),
             via: None,
+            defer_values: false,
         };
         let mut out = Vec::new();
         self.parts.push(PartFrame::default());
@@ -939,6 +964,7 @@ impl<'c> Eval<'c> {
         let (value, parts) = self.written(&cx, e)?;
         let template = Contrib {
             parts,
+            complete: !deferred.reads.is_empty(),
             ..template.clone()
         };
         self.decompose(Vec::new(), deferred.ty, value, &template, &mut out);

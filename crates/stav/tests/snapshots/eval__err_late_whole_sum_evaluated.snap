@@ -1,0 +1,8 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0603]: division by zero
+  --> app/main.stav:7:53
+  label: app/main.stav:5:45: in this call of `failing`

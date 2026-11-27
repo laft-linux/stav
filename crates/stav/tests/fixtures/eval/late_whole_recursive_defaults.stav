@@ -1,0 +1,21 @@
+struct Download {
+  version: Str
+  url:     Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+type Build = cargo(download: Download) | meson
+
+struct Config {
+  downloads: Map<Str, Download>
+  optional:  Option<Download>
+  build:     Build
+}
+
+struct Root { key: Str = "x", cfg: Config }
+
+fn make(key: Str) -> Config = Config { downloads = {}, optional = none, build = meson }
+
+cfg = default(make(self.key))
+cfg.downloads.tool.version = "2"
+cfg.optional.version = "3"
+cfg { build cargo { download { version = "4" } } }

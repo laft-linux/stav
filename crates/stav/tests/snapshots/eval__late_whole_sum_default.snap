@@ -1,24 +1,32 @@
 ---
 source: crates/stav/tests/eval.rs
-assertion_line: 225
 expression: output
 ---
 --- JSON
 {
-  "zero": 0,
+  "key": "x",
   "build": {
     "cargo": {
-      "features": []
+      "features": [
+        "selected"
+      ],
+      "bins": [
+        "x"
+      ]
     }
   }
 }
 --- TOML
-zero = 0
+key = "x"
 
 [build.cargo]
-features = []
+features = ["selected"]
+bins = ["x"]
 --- YAML
-zero: 0
+key: x
 build:
   cargo:
-    features: []
+    features:
+      - selected
+    bins:
+      - x
