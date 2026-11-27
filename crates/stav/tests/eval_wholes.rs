@@ -58,6 +58,22 @@ fn lower_whole_dependency_cycles_finish_before_evaluation() {
             "E0607",
             &["`k` reads `build`", "`build` reads `k`"],
         );
+        for result in ["none", "Q { x = y, k = 2, r = 3 }"] {
+            let source = format!(
+                "fn h(r: Int) -> Int = 1\n\
+                 fn opt(y: Int) -> Option<Q> = {result}\n\
+                 struct Q {{ x: Int, k: Int = h(self.r), r: Int = self.k }}\n\
+                 struct S {{ q: Option<Q> }}\n\
+                 struct Root {{ y: Int = 0, s: S }}\n\
+                 s.q = opt(self.y)\n\
+                 s.q.x = force(1)\n"
+            );
+            assert_error(
+                &source,
+                "E0607",
+                &["`s.q.k` reads `s.q.r`", "`s.q.r` reads `s.q.k`"],
+            );
+        }
         return;
     }
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -289,4 +305,166 @@ fn replaced_wholes_cannot_supply_required_fields_of_created_options() {
         "#
     );
     assert_error(&source, "E0801", &["cfg.o.version"]);
+}
+
+#[test]
+fn deferred_optional_scalars_conflict_only_when_winners_differ() {
+    for (ty, literal, other, expected) in [
+        ("Str", "\"a\"", "\"b\"", json!("a")),
+        ("Int", "1", "2", json!(1)),
+        ("Bool", "true", "false", json!(true)),
+    ] {
+        for result in ["none", other, literal] {
+            let source = format!(
+                "struct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
+                 fn f(x: Int) -> Option<{ty}> = {result}\n\
+                 o = f(self.x)\no = {literal}\n"
+            );
+            if result == literal {
+                assert_eq!(evaluate(&source).unwrap()["o"], expected);
+            } else {
+                assert_error(&source, "E0501", &[]);
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_optional_collections_merge_present_winners_in_order() {
+    for ty in ["List<Str>", "Set<Str>"] {
+        for result in ["none", "[\"b\"]"] {
+            let source = format!(
+                "struct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
+                 fn f(x: Int) -> Option<{ty}> = {result}\n\
+                 o = f(self.x)\no = [\"a\"]\n"
+            );
+            if result == "none" {
+                assert_error(&source, "E0501", &[]);
+            } else {
+                let value = evaluate(&source).unwrap();
+                if ty == "List<Str>" {
+                    assert_eq!(value["o"], json!(["b", "a"]));
+                } else {
+                    let mut items = value["o"].as_array().unwrap().clone();
+                    items.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+                    assert_eq!(items, vec![json!("a"), json!("b")]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_optional_winners_distinguish_all_none_from_mixed_presence() {
+    for (ty, present, expected) in [
+        ("List<Str>", "[\"b\"]", json!(["b", "b"])),
+        ("Set<Str>", "[\"b\"]", json!(["b"])),
+        ("Str", "\"b\"", json!("b")),
+    ] {
+        for f in ["none", present] {
+            for g in ["none", present] {
+                let source = format!(
+                    "struct Root {{ x: Int = 0, y: Int = 0, o: Option<{ty}> }}\n\
+                     fn f(x: Int) -> Option<{ty}> = {f}\n\
+                     fn g(y: Int) -> Option<{ty}> = {g}\n\
+                     o = f(self.x)\no = g(self.y)\n"
+                );
+                if (f == "none") != (g == "none") {
+                    assert_error(&source, "E0501", &[]);
+                } else {
+                    assert_eq!(
+                        evaluate(&source).unwrap()["o"],
+                        if f == "none" {
+                            Value::Null
+                        } else {
+                            expected.clone()
+                        }
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn literal_none_conflicts_with_deferred_winners_without_evaluation() {
+    for ty in ["Str", "List<Str>", "Set<Str>", "Int"] {
+        let source = format!(
+            "struct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
+             fn f(x: Int) -> Option<{ty}> = if 1 / x == 0 {{ none }} else {{ none }}\n\
+             o = f(self.x)\no = none\n"
+        );
+        assert_error(&source, "E0501", &[]);
+    }
+}
+
+#[test]
+fn losing_optional_deferred_values_never_run() {
+    for (ty, present, expected) in [
+        ("Str", "\"a\"", json!("a")),
+        ("List<Str>", "[\"a\"]", json!(["a"])),
+        ("Set<Str>", "[\"a\"]", json!(["a"])),
+        ("Int", "1", json!(1)),
+    ] {
+        for winner in ["none", present] {
+            let source = format!(
+                "struct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
+                 fn f(x: Int) -> Option<{ty}> = if 1 / x == 0 {{ none }} else {{ none }}\n\
+                 o = default(f(self.x))\no = {winner}\n"
+            );
+            assert_eq!(
+                evaluate(&source).unwrap()["o"],
+                if winner == "none" {
+                    Value::Null
+                } else {
+                    expected.clone()
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn struct_wholes_suppress_all_declared_defaults_along_struct_fields() {
+    for w in ["g(self.m)", "0", "1 / self.zero", "1 / 0"] {
+        for m in ["d(self.w)", "{ q = 1 / self.w }", "d(0)", "{ q = 1 / 0 }"] {
+            for nested in [false, true] {
+                let (declarations, path, whole) = if nested {
+                    (
+                        "struct Outer { inner: S }",
+                        "s.inner",
+                        "Outer { inner = S { zero = 0, w = 7, m = { lower = 1, shared = 1 } } }",
+                    )
+                } else {
+                    (
+                        "",
+                        "s",
+                        "S { zero = 0, w = 7, m = { lower = 1, shared = 1 } }",
+                    )
+                };
+                let ty = if nested { "Outer" } else { "S" };
+                let source = format!(
+                    "struct S {{ zero: Int = 1 / self.w, w: Int = {w}, m: Map<Str, Int> = {m} }}\n\
+                 {declarations}\n\
+                 struct Root {{ x: Int = 0, y: Int = 0, s: {ty} }}\n\
+                 fn g(m: Map<Str, Int>) -> Int = 1 / 0\n\
+                 fn d(w: Int) -> Map<Str, Int> = {{ q = 1 / w }}\n\
+                 fn a(x: Int) -> {ty} = {whole}\n\
+                 fn b(y: Int) -> Map<Str, Int> = {{ higher = 2, shared = 2 }}\n\
+                 s = default(a(self.x))\n\
+                 {path}.m = b(self.y)\n"
+                );
+                let value = evaluate(&source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+                let instance = if nested {
+                    &value["s"]["inner"]
+                } else {
+                    &value["s"]
+                };
+                assert_eq!(
+                    instance,
+                    &json!({"zero": 0, "w": 7, "m": {"lower": 1, "higher": 2, "shared": 2}})
+                );
+            }
+        }
+    }
 }

@@ -1,0 +1,9 @@
+struct Q { x: Int, k: Int = h(self.r), r: Int = self.k }
+struct S { q: Option<Q> }
+struct Root { y: Int = 0, s: S }
+
+fn h(r: Int) -> Int = 1
+fn opt(y: Int) -> Option<Q> = none
+
+s.q = opt(self.y)
+s.q.x = force(1)

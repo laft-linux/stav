@@ -1,0 +1,5 @@
+struct Q { x: Int, r: Int = self.k }
+struct Parent { k: Int = 2, q: Q }
+struct Root { parent: Parent }
+
+parent { q { x = 0 } }

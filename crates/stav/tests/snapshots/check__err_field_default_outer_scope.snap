@@ -1,0 +1,8 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0303]: no enclosing block has a field `k`
+  --> app/main.stav:1:34
+  help: did you mean `r` or `x`?

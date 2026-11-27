@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0607]: `self` dependencies form a cycle
+  --> app/main.stav:1:29
+  label: app/main.stav:1:29: `s.q.k` reads `s.q.r`
+  label: app/main.stav:1:49: `s.q.r` reads `s.q.k`
+  note: cycle: s.q.k -> s.q.r -> s.q.k

@@ -925,3 +925,23 @@ fn parameter_defaults_cannot_read_self() {
     let codes: Vec<_> = diagnostics.iter().map(|d| d.diagnostic.code).collect();
     assert_eq!(codes, ["E0606"], "{diagnostics}");
 }
+
+#[test]
+fn field_defaults_never_resolve_fields_from_enclosing_instances() {
+    for context in [
+        "struct Root { k: Int = 1 }",
+        "struct Root { k: Int = 1, q: Q }\nq { x = 0 }",
+        "struct Parent { k: Int = 2, q: Q }\nstruct Root { parent: Parent }\nparent { q { x = 0 } }",
+    ] {
+        let text = format!("struct Q {{ x: Int, r: Int = self.k }}\n{context}\n");
+        let fixture = fixture(&text);
+        let diagnostics = check(&fixture.host, &fixture.root)
+            .expect_err("field defaults must resolve in their declaring struct");
+        let errors: Vec<_> = diagnostics.iter().collect();
+        assert_eq!(errors.len(), 1, "{diagnostics}");
+        let error = &errors[0].diagnostic;
+        assert_eq!(error.code, "E0303", "{diagnostics}");
+        let start = text.find("self.k").unwrap() + "self.".len();
+        assert_eq!(error.span.range(), start..start + 1, "{diagnostics}");
+    }
+}

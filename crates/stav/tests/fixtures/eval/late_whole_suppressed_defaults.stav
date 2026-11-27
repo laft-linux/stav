@@ -1,0 +1,10 @@
+struct S { w: Int = g(self.m), m: Map<Str, Int> = d(self.w) }
+struct Root { x: Int = 0, y: Int = 0, s: S }
+
+fn g(m: Map<Str, Int>) -> Int = 1
+fn d(w: Int) -> Map<Str, Int> = { q = 1 / w }
+fn a(x: Int) -> S = S { w = 7, m = { lower = 1, shared = 1 } }
+fn b(y: Int) -> Map<Str, Int> = { higher = 2, shared = 2 }
+
+s = default(a(self.x))
+s.m = b(self.y)

@@ -833,7 +833,7 @@ Fix the spelling, or declare the name.
 
 ### E0303
 
-`self` is not followed by a field that an enclosing block declares. `self.f` looks for `f` in the struct of the innermost enclosing block, then in the blocks around it. A part stops the search at its own struct. The same code is reported for a bare `self` that is not followed by a field.
+`self` is not followed by a field that an enclosing block declares. `self.f` looks for `f` in the struct of the innermost enclosing block, then in the blocks around it. A part stops the search at its own struct. The same code is reported for a bare `self` that is not followed by a field. A field default searches only its own struct, never enclosing blocks. A missing field is reported at the declaration, regardless of where that struct is used.
 
 <!-- file: e0303.stav -->
 
@@ -857,7 +857,31 @@ error[E0303]: no enclosing block has a field `prt`
   = help: did you mean `port`?
 ```
 
-Name a field that the block or an enclosing block declares. [Late-bound self](/guide/self) explains the search.
+A matching field in an enclosing instance cannot make this default valid:
+
+<!-- file: e0303-default.stav -->
+
+```stav
+struct Q { x: Int, r: Int = self.k }
+struct Parent { k: Int = 2, q: Q }
+struct Root { parent: Parent }
+
+parent { q { x = 0 } }
+```
+
+<!-- run: check e0303-default.stav -->
+
+```text
+error[E0303]: no enclosing block has a field `k`
+  ┌─ e0303-default.stav:1:34
+  │
+1 │ struct Q { x: Int, r: Int = self.k }
+  │                                  ^
+  │
+  = help: did you mean `r` or `x`?
+```
+
+Name a field that the default's own struct declares, or write the expression in a body where the enclosing block is visible. [Late-bound self](/guide/self) explains the search.
 
 ### E0304
 
@@ -1606,7 +1630,7 @@ These are reported after evaluation, when the contributions of every file are me
 
 ### E0501
 
-Two or more contributions give different values to the same attribute at the same priority. For scalars, the contributions with the highest priority must agree. Every winner is listed with its priority.
+Two or more contributions give different values to the same attribute at the same priority. For scalars, the contributions with the highest priority must agree. Every winner is listed with its priority. At an `Option` path, a deferred winner that returns `none` conflicts with a present winner of the same priority. This includes optional scalars, lists and sets. If every deferred winner returns `none`, the result is `none`; otherwise all present winners merge as the inner type. A literal `none` beside a deferred winner of the same priority conflicts before that deferred expression is evaluated.
 
 <!-- file: e0501.stav -->
 

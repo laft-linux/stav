@@ -400,11 +400,49 @@ cfg.download.version = force("2")
 
 The higher whole option replaces the lower download even though it is `none`. The forced version creates a new instance, whose `url` comes from its declared default rather than the lower value. The lower whole still supplies `n`.
 
-The dependency graph includes the `self` edges of declared defaults that might fill a higher-created instance, before any whole value runs. These edges are included even if a whole value later supplies the instance and the defaults are unused. This applies at every depth, recursively through struct fields and struct-typed payload fields. In both examples above, `url` depends on the created download's `version` regardless of what `make` returns. This conservative graph can therefore reject a cycle involving a default that would not run. Fields reached from the whole value through struct fields only always have supplied values, so their defaults add no fallback edges. [Cycles](/guide/self#cycles) explains the instance graph.
+The dependency graph includes the `self` edges of declared defaults that might fill a higher-created instance, before any whole value runs. These edges are included even if a whole value later supplies the instance and the defaults are unused. This applies at every depth, recursively through struct fields and struct-typed payload fields. In both examples above, `url` depends on the created download's `version` regardless of what `make` returns. This conservative graph can therefore reject a cycle involving a default that would not run. When a late whole value has a struct as its own type, it guarantees that instance and every instance reached through struct-typed fields. Their declared defaults of every kind never take part, never run and add no edges, including late whole map defaults or defaults that would otherwise win at a node. This is decided from paths and types only. A whole value of an `Option`, map or sum does not guarantee a struct instance. The guarantee also stops at any option, map entry or sum variant on the path. [Cycles](/guide/self#cycles) explains the instance graph.
+
+Declared defaults cannot introduce a cycle or a failing fallback into this supplied struct:
+
+<!-- file: late-suppressed-defaults.stav -->
+
+```stav
+struct S { w: Int = g(self.m), m: Map<Str, Int> = d(self.w) }
+struct Root { x: Int = 0, y: Int = 0, s: S }
+
+fn g(m: Map<Str, Int>) -> Int = 1 / 0
+fn d(w: Int) -> Map<Str, Int> = { q = 1 / w }
+fn a(x: Int) -> S = S { w = 7, m = { lower = 1, shared = 1 } }
+fn b(y: Int) -> Map<Str, Int> = { higher = 2, shared = 2 }
+
+s   = default(a(self.x))
+s.m = b(self.y)
+```
+
+<!-- run: eval late-suppressed-defaults.stav -->
+
+```json
+{
+  "x": 0,
+  "y": 0,
+  "s": {
+    "w": 7,
+    "m": {
+      "higher": 2,
+      "lower": 1,
+      "shared": 2
+    }
+  }
+}
+```
+
+The whole struct supplies `w`. Both whole values contribute map keys, but neither declared default of `S` takes part. Neither `g` nor `d` runs, and the graph has no default edges between `s.w` and `s.m`.
 
 ### Options
 
 An `Option<T>` attribute is present when a contribution sets it or anything inside it, and that contribution outranks every `none`. A present option then merges as a `T`, with declared defaults filling fields of instances that no whole value supplies. An option that nothing sets is `none`, and so is an option whose highest contribution is `none`. A late whole value counts as present when presence is decided, before its result is known. If it evaluates to `none`, only higher contributions below the path remain. Without any, the result is `none`. Otherwise they merge as `T`, with declared defaults filling fields of instances that no whole value supplies, as described under [late whole values](#late-whole-values).
+
+Optional scalars, lists and sets can have several deferred winners at the same priority. Evaluate those winners before merging their results: `none` beside a present value is E0501, all `none` results give `none`, and all present results merge as the inner type. For example, a deferred `["b"]` followed by a literal `["a"]` gives `["b", "a"]` for `Option<List<Str>>`, but a deferred `none` beside that literal conflicts. A literal `none` beside a deferred winner of the same priority is E0501 before evaluation, so a failing deferred expression does not run.
 
 <!-- file: options.stav -->
 
