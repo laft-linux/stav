@@ -138,6 +138,8 @@ let b = local(port = 9000)
 let c = Ready.check(["probe"], timeout = 5)
 ```
 
+A variant constructor call eagerly builds a complete plain value. Its omitted payload defaults are evaluated like function parameter defaults, even if the caller ignores the value or higher merge contributions replace its payload fields. Only a struct or map literal written as a default is split into field or key contributions. See [declared defaults](/reference/merging#declared-defaults) for the distinction.
+
 Functions cannot call themselves, directly or through other functions. The [totality](/reference/totality) page explains why and what to write instead.
 
 ## Conditionals

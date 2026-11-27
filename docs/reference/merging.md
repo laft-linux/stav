@@ -151,7 +151,7 @@ settings = { a = 3, b = 4 }
 
 ## Declared defaults
 
-Every declared struct or payload field default is evaluated only when it may fill a field, and at most once per field it fills. Whether it may is decided statically from contributions, before any deferred value runs. This applies even without `self` and outside late whole values. A default that loses to another contribution at its own path never runs, so it cannot fail:
+A declared default that fills a merged struct or tagged-block payload field is evaluated only when it may fill a field, and at most once per field it fills. Whether it may is decided statically from contributions, before any deferred value runs. This applies even without `self` and outside late whole values. A default that loses to another contribution at its own path never runs, so it cannot fail:
 
 <!-- file: declared-losers.stav -->
 
@@ -177,7 +177,7 @@ m.b.x = 7
 }
 ```
 
-Defaults without `self` reuse their first result across instances within one evaluation. Defaults that read `self` use the fields of their own instance. A literal default splits recursively into field and literal-key contributions, so a covered child can remain unevaluated while a sibling still fills its field. Computed map keys remain unknown during cycle checking and are evaluated only when their default participates. The `self` reads written in each computed-key entry's value belong to the map field itself, not to a child path. Struct instances created by the entry get placeholder paths with their own literal-field and declared-default dependencies, recursively, whenever the literal's edges participate. [Computed keys and cycles](/guide/self#computed-keys-in-declared-defaults) explains this conservative graph. Other expressions remain whole: when a constructor default participates, its arguments are evaluated normally.
+Defaults without `self` reuse their first result across instances within one evaluation. Defaults that read `self` use the fields of their own instance. A struct or map literal written as a default splits recursively into field and literal-key contributions, so a covered child can remain unevaluated while a sibling still fills its field. Computed map keys remain unknown during cycle checking and are evaluated only when their default participates. The `self` reads written in each computed-key entry's value belong to the map field itself, not to a child path. Struct instances created by the entry get placeholder paths with their own literal-field and declared-default dependencies, recursively, whenever the literal's edges participate. [Computed keys and cycles](/guide/self#computed-keys-in-declared-defaults) explains this conservative graph. Other expressions remain whole. A participating variant constructor call eagerly builds a complete plain value, evaluating both explicit arguments and the declared defaults of omitted payload fields like function parameter defaults. Higher contributions to its payload fields do not suppress this work.
 
 A whole declared default of a struct, a sum with a payload variant, an `Option`, a map or `Data` runs unless higher contributions [cover its path](#late-whole-values), whether or not it reads `self`. A higher tagged-block selection does not cover a payload sum: the default may supply the matching payload's omitted fields. Its constructor therefore runs even if it produces a different variant whose payload is discarded, and it may fail:
 
@@ -227,6 +227,71 @@ build cargo { n = 7 }
 ```
 
 The result is `cargo` with `n = 7` and `kept = 5`. A higher whole attribute contribution of the sum covers the path instead and suppresses the lower default.
+
+The unit of evaluation is the contribution, not each field of its result. A variant constructor call is a call, not a literal. If an omitted payload default fails, the constructor fails even when a higher contribution replaces that field:
+
+<!-- file: declared-payload-error.stav -->
+
+```stav
+type Build = cargo(n: Int = 1 / 0, kept: Int = 4) | meson(o: Int = 0)
+struct Root { build: Build = cargo(kept = 5) }
+build cargo { n = 7 }
+```
+
+<!-- run: eval declared-payload-error.stav -->
+
+```text
+error[E0603]: division by zero
+  ┌─ declared-payload-error.stav:1:31
+  │
+1 │ type Build = cargo(n: Int = 1 / 0, kept: Int = 4) | meson(o: Int = 0)
+  │                               ^
+```
+
+Calling a function that returns the variant does not change this behavior. The constructor still builds its complete value before the function returns:
+
+<!-- file: declared-payload-function-error.stav -->
+
+```stav
+type Build = cargo(n: Int = 1 / 0, kept: Int = 4) | meson(o: Int = 0)
+fn mk() -> Build = cargo(kept = 5)
+struct Root { build: Build = mk() }
+build cargo { n = 7 }
+```
+
+<!-- run: eval declared-payload-function-error.stav -->
+
+```text
+error[E0603]: division by zero
+  ┌─ declared-payload-function-error.stav:1:31
+  │
+1 │ type Build = cargo(n: Int = 1 / 0, kept: Int = 4) | meson(o: Int = 0)
+  │                               ^
+2 │ fn mk() -> Build = cargo(kept = 5)
+3 │ struct Root { build: Build = mk() }
+  │                              ---- in this call of `mk`
+```
+
+In contrast, a struct literal written as a default splits into field contributions. The higher `s.a` suppresses the failing declared default, while the literal supplies `b = 5`:
+
+<!-- file: declared-struct-literal.stav -->
+
+```stav
+struct S { a: Int = 1 / 0, b: Int = 0 }
+struct Root { s: S = { b = 5 } }
+s.a = 7
+```
+
+<!-- run: eval declared-struct-literal.stav -->
+
+```json
+{
+  "s": {
+    "a": 7,
+    "b": 5
+  }
+}
+```
 
 An attribute statement such as `x = default(1 / 0)` is not a declared default. It still runs eagerly and fails even when a later `x = 7` wins. The [`self` guide](/guide/self#how-it-fits-with-eager-evaluation) contrasts eager statements with deferred values.
 

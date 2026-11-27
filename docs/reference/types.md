@@ -219,7 +219,7 @@ services:
 
 - Variant names are unique within one sum type. Different sum types may reuse them.
 - A variant without payload is written as a bare name, such as `info`, where a value of its sum type is expected.
-- A variant with payload is constructed with call syntax. Arguments may be positional, in the order of the declaration, or named. Payload fields with defaults may be left out.
+- A variant with payload is constructed with call syntax. Arguments may be positional, in the order of the declaration, or named. Payload fields with defaults may be left out. The call eagerly builds a complete plain value, evaluating omitted defaults like function parameter defaults. Higher merge contributions can replace the resulting fields, but do not suppress any part of a participating call.
 - The qualified forms `Level.info` and `Ready.notify(fd = 3)` work everywhere, and so does `alias.Ready.notify(fd = 3)` for a type imported as `alias`.
 - A variant without payload renders as its name. A variant with payload renders as a map from the variant name to its payload fields.
 
