@@ -767,14 +767,20 @@ fn computed_default_keys_do_not_hide_known_child_default_cycles() {
                 "struct S {{ a: Int = self.b, b: Int = self.a, c: Int = 0 }}\n\
                  {declarations}\n{whole}{forced}"
             );
-            assert_error(
-                &source,
-                "E0607",
-                &[
-                    &format!("`{path}.x.a` reads `{path}.x.b`"),
-                    &format!("`{path}.x.b` reads `{path}.x.a`"),
-                ],
-            );
+            let error = evaluate(&source).expect_err("both instances must retain their cycles");
+            let diagnostics: Vec<_> = error.iter().collect();
+            assert_eq!(diagnostics.len(), 2, "{error}\n{source}");
+            for diagnostic in diagnostics {
+                assert_eq!(diagnostic.diagnostic.code, "E0607", "{error}");
+                assert_eq!(diagnostic.diagnostic.labels.len(), 2, "{error}");
+            }
+            let display = error.to_string();
+            for instance in [format!("{path}.x"), format!("{path}.#0")] {
+                for (from, to) in [("a", "b"), ("b", "a")] {
+                    let edge = format!("`{instance}.{from}` reads `{instance}.{to}`");
+                    assert!(display.contains(&edge), "missing edge {edge}:\n{display}");
+                }
+            }
         }
     }
 }
@@ -801,8 +807,8 @@ fn known_map_children_keep_covered_defaults_suspended_while_keys_are_unknown() {
     assert_error(
         "struct S { a: Int = self.b, b: Int = self.a }\n\
          struct Root { m: Map<Str, S> = { x = { a = 1 }, \"#{1 / 0}\" = {} } }",
-        "E0603",
-        &[],
+        "E0607",
+        &["`m.#0.a` reads `m.#0.b`", "`m.#0.b` reads `m.#0.a`"],
     );
 }
 

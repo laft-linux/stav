@@ -21,8 +21,8 @@ use super::{Eval, R};
 use crate::ast::{self, Expr, Key, Stmt};
 use crate::check::FileId;
 use crate::check::model::{
-    BlockRule, Fact, IncludeFact, LabelFact, LetFact, Meaning, Priority, SelfRead, Step, Target,
-    UnitId,
+    BlockRule, Callee, Fact, IncludeFact, LabelFact, LetFact, Meaning, Priority, SelfRead, Step,
+    Target, UnitId,
 };
 use crate::check::types::{Type, TypeId};
 use crate::span::{SourceSpan, Span};
@@ -91,7 +91,7 @@ pub(crate) enum DeferredForm {
 }
 
 /// A suspended right side, including read-free declared defaults.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Deferred {
     /// Whether evaluation builds a value or resolves a map literal's keys.
     pub(crate) form: DeferredForm,
@@ -526,6 +526,30 @@ impl<'c> Eval<'c> {
             Fact::Expr(f) => Some(&f.meaning),
             _ => None,
         };
+        if self.merge.graph_only
+            && let (Expr::Call(_), Some(Meaning::Call(call))) = (e, meaning)
+            && let Callee::Variant { sum, variant } = call.callee
+        {
+            let variant = u32::try_from(variant).unwrap_or(u32::MAX);
+            out.push(Pending {
+                path: path.clone(),
+                contrib: template.with(Kind::Select(variant)),
+            });
+            let params = self.c.types.sum(sum).variants[variant as usize]
+                .fields
+                .as_deref()
+                .unwrap_or_default();
+            for (i, (param, argument)) in params.iter().zip(&call.args).enumerate() {
+                let Some(node) = argument else { continue };
+                let value = self.expr_at(body.unit, *node)?;
+                let mut sub = path.clone();
+                sub.push(Seg::Variant(variant));
+                sub.push(Seg::Field(u32::try_from(i).unwrap_or(u32::MAX)));
+                let template = template.spanning(value.syntax().span());
+                self.contribute(body, sub, param.ty, value, &template, out)?;
+            }
+            return Ok(());
+        }
         match (e, types.get(inner).clone()) {
             (Expr::Paren(paren), _) => {
                 if let Some(e) = paren.expr() {
@@ -723,6 +747,59 @@ impl<'c> Eval<'c> {
             self.contribute(body, sub, value_ty, value, &template, out)?;
         }
         Ok(())
+    }
+
+    /// Exposes computed entries without resolving their keys. Written reads
+    /// remain on the map contribution, while omitted defaults get instance frames.
+    pub(crate) fn computed_instances(
+        &mut self,
+        deferred: &Deferred,
+        template: &Contrib,
+    ) -> R<Vec<Pending>> {
+        let file = self.unit_file(deferred.unit);
+        let Expr::Map(map) = self.expr_at(deferred.unit, deferred.node)? else {
+            return Err(self.bug(
+                file,
+                template.span,
+                "a suspended map literal has a non-map shape",
+            ));
+        };
+        let types = &self.c.types;
+        let inner = types
+            .unwrap_option(deferred.ty)
+            .unwrap_or_else(|| types.peel(deferred.ty));
+        let Type::Map(_, value_ty) = *types.get(inner) else {
+            return Err(self.bug(
+                file,
+                template.span,
+                "a suspended map literal has a non-map type",
+            ));
+        };
+        let body = Body {
+            unit: deferred.unit,
+            file,
+            base: Vec::new(),
+            frames: deferred.frames.iter().map(|path| path.to_vec()).collect(),
+            env: deferred.env.clone(),
+            via: template.via.clone(),
+            defer_values: true,
+        };
+        let mut out = Vec::new();
+        let entries = map.entries().filter(
+            |entry| matches!(entry.key(), Some(Key::Str(string)) if string.value().is_none()),
+        );
+        for (i, entry) in entries.enumerate() {
+            let Some(value) = entry.value() else { continue };
+            let path = vec![Seg::Placeholder(u32::try_from(i).unwrap_or(u32::MAX))];
+            let template = template.spanning(entry.syntax().span());
+            self.contribute(&body, path, value_ty, value, &template, &mut out)?;
+        }
+        for pending in &mut out {
+            if let Kind::Deferred(deferred) = &mut pending.contrib.kind {
+                Rc::make_mut(deferred).reads.clear();
+            }
+        }
+        Ok(out)
     }
 
     /// Contributes a value at `path`: a struct or map one contribution per

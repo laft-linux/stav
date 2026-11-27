@@ -46,6 +46,8 @@ pub(crate) enum Seg {
     Field(u32),
     /// A map key: the string, or the variant name of a sum key.
     Key(Rc<str>),
+    /// A computed entry's instance, used only in the static dependency graph.
+    Placeholder(u32),
     /// The payload of a variant of a tagged sum.
     Variant(u32),
 }
@@ -98,7 +100,7 @@ enum State {
     Missing,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Node {
     parent: Option<NodeId>,
     seg: Option<Seg>,
@@ -148,7 +150,7 @@ impl Node {
 }
 
 /// The contribution trie.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Merge {
     pub(crate) contribs: Vec<Contrib>,
     nodes: Vec<Node>,
@@ -157,6 +159,8 @@ pub(crate) struct Merge {
     attributes: BTreeSet<u32>,
     /// Whether static whole validation has completed.
     static_checked: bool,
+    /// Whether this trie is a disposable graph containing placeholder instances.
+    pub(crate) graph_only: bool,
 }
 
 impl Merge {
@@ -361,7 +365,7 @@ impl Merge {
             Shape::Map(..) => node
                 .children
                 .iter()
-                .filter(|(seg, _)| matches!(seg, Seg::Key(_)))
+                .filter(|(seg, _)| matches!(seg, Seg::Key(_) | Seg::Placeholder(_)))
                 .map(|(_, &c)| c)
                 .collect(),
             Shape::Tagged(Some(v)) => self.child(n, &Seg::Variant(v)).into_iter().collect(),
@@ -654,7 +658,7 @@ impl<'c> Eval<'c> {
                     .node(n)
                     .children
                     .iter()
-                    .filter(|(seg, _)| matches!(seg, Seg::Key(_)))
+                    .filter(|(seg, _)| matches!(seg, Seg::Key(_) | Seg::Placeholder(_)))
                     .map(|(_, &c)| c)
                     .collect();
                 for child in children {
@@ -732,7 +736,7 @@ impl<'c> Eval<'c> {
                     .fields
                     .get(i as usize)
                     .map(|f| f.ty),
-                (Seg::Key(_), Type::Map(_, v)) => Some(*v),
+                (Seg::Key(_) | Seg::Placeholder(_), Type::Map(_, v)) => Some(*v),
                 (Seg::Variant(v), Type::Sum(s)) => {
                     let params = self
                         .c
@@ -831,6 +835,9 @@ impl<'c> Eval<'c> {
                 !self.merge.static_checked || c == n || !self.covered_path(c, n, contrib.prio)
             }) {
                 return true;
+            }
+            if matches!(node.seg, Some(Seg::Placeholder(_))) {
+                break;
             }
             current = node.parent;
         }
@@ -965,7 +972,7 @@ impl<'c> Eval<'c> {
             if self.replaced(n, pending.contrib.prio) {
                 return;
             }
-            if pending.contrib.complete && matches!(seg, Seg::Key(_)) {
+            if pending.contrib.complete && matches!(seg, Seg::Key(_) | Seg::Placeholder(_)) {
                 self.replace_lower(n, pending.contrib.prio);
             }
         }
@@ -985,10 +992,14 @@ impl<'c> Eval<'c> {
     }
 
     /// Whether a whole value has supplied this complete struct instance.
+    /// In the graph, an opaque expression constructs its own defaults, so its
+    /// result cannot leave omitted fields for the placeholder's defaults.
     fn supplied(&self, n: NodeId) -> bool {
         self.merge.node(n).contribs.iter().any(|id| {
             let c = self.merge.contrib(*id);
             c.complete && matches!(c.kind, Kind::Present)
+                || self.merge.graph_only
+                    && matches!(&c.kind, Kind::Deferred(d) if d.form == DeferredForm::Value)
         })
     }
 
@@ -1011,7 +1022,12 @@ impl<'c> Eval<'c> {
                         .into_iter()
                         .all(|boundary| self.fallback_creator(boundary));
             }
-            if !option && matches!(node.seg, Some(Seg::Key(_) | Seg::Variant(_))) {
+            if !option
+                && matches!(
+                    node.seg,
+                    Some(Seg::Key(_) | Seg::Placeholder(_) | Seg::Variant(_))
+                )
+            {
                 boundaries.push(c);
             }
             current = node.parent;
@@ -1162,7 +1178,9 @@ impl<'c> Eval<'c> {
         fields: Vec<(TypeId, Option<usize>)>,
         validation_only: bool,
     ) -> R<()> {
-        if validation_only && !self.potential_fallback(n) || !validation_only && self.supplied(n) {
+        if validation_only && !self.potential_fallback(n)
+            || (!validation_only || self.merge.graph_only) && self.supplied(n)
+        {
             return Ok(());
         }
         let node = self.merge.node_mut(n);
@@ -1913,6 +1931,7 @@ impl<'c> Eval<'c> {
         let parent_node = self.merge.node(parent);
         match &node.seg {
             Some(Seg::Key(k)) => k.to_string(),
+            Some(Seg::Placeholder(i)) => format!("#{i}"),
             Some(Seg::Variant(v)) => self.variant_name(parent, *v),
             Some(Seg::Field(i)) => {
                 let i = *i as usize;
@@ -1953,12 +1972,113 @@ impl<'c> Eval<'c> {
     }
 
     fn display_path(&self, n: NodeId) -> String {
+        if self.merge.graph_only && n != NodeId::ROOT {
+            let mut keys = Vec::new();
+            let mut current = Some(n);
+            while let Some(c) = current {
+                if c != NodeId::ROOT {
+                    keys.push(match self.merge.node(c).seg {
+                        Some(Seg::Placeholder(i)) => format!("#{i}"),
+                        _ => AttrPath::new(vec![self.key_name(c)]).to_string(),
+                    });
+                }
+                current = self.merge.node(c).parent;
+            }
+            keys.reverse();
+            return keys.join(".");
+        }
         let path = self.attr_path(n);
         if path.keys().is_empty() {
             "the root".to_owned()
         } else {
             path.to_string()
         }
+    }
+
+    /// Checks computed-entry instances in a disposable trie, never in the value
+    /// being merged. Only participating literals can introduce placeholders.
+    fn check_cycles(&mut self, top: NodeId, fallback_owners: &BTreeSet<NodeId>) -> R<Vec<NodeId>> {
+        let mut pending = Vec::new();
+        for n in self.merge.reached(top) {
+            pending.extend(self.computed_literals(n).into_iter().map(|id| (n, id)));
+        }
+        if pending.is_empty() {
+            return self.dependency_order(top, fallback_owners);
+        }
+        let graph = self.merge.clone();
+        let original = std::mem::replace(&mut self.merge, graph);
+        let original_len = original.nodes.len();
+        self.merge.graph_only = true;
+        let result = (|| {
+            let mut expanded = BTreeSet::new();
+            while let Some((n, id)) = pending.pop() {
+                if !expanded.insert(id) {
+                    continue;
+                }
+                let contrib = self.merge.contrib(id).clone();
+                let Kind::Deferred(deferred) = &contrib.kind else {
+                    continue;
+                };
+                let types = &self.c.types;
+                let inner = types
+                    .unwrap_option(deferred.ty)
+                    .unwrap_or_else(|| types.peel(deferred.ty));
+                let Type::Map(_, value_ty) = *types.get(inner) else {
+                    continue;
+                };
+                let out = self.computed_instances(deferred, &contrib)?;
+                let mut instances = BTreeSet::new();
+                for p in out {
+                    let Some(seg) = p.path.first() else { continue };
+                    let instance = self.merge.child_or_new(n, seg.clone());
+                    instances.insert(instance);
+                    self.merge.insert(n, &p.path, p.contrib);
+                }
+                self.merge.static_checked = false;
+                for instance in instances {
+                    self.structure(instance, value_ty)?;
+                    for child in self.merge.reached(instance) {
+                        pending.extend(
+                            self.computed_literals(child)
+                                .into_iter()
+                                .map(|id| (child, id)),
+                        );
+                    }
+                }
+                self.merge.static_checked = true;
+            }
+            let mut owners: BTreeSet<NodeId> = self
+                .merge
+                .nodes
+                .iter()
+                .filter(|node| !node.checks.is_empty())
+                .filter_map(|node| node.parent)
+                .collect();
+            owners.retain(|&owner| self.potential_fallback(owner));
+            self.dependency_order(top, &owners)
+        })();
+        self.merge = original;
+        result.map(|order| {
+            order
+                .into_iter()
+                .filter(|n| n.index() < original_len)
+                .collect()
+        })
+    }
+
+    /// Returns participating computed-key literals at one graph node.
+    fn computed_literals(&self, n: NodeId) -> Vec<u32> {
+        let node = self.merge.node(n);
+        node.pending.iter().chain(&node.winners).chain(&node.checks)
+            .copied()
+            .filter(|&id| {
+                matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if d.form == DeferredForm::MapLiteral)
+                    && !self.declared_replaced(n, id)
+                    && !self.covered_path(n, n, self.merge.contrib(id).prio)
+                    && (!node.checks.contains(&id)
+                        || node.parent.is_some_and(|owner| self.potential_fallback(owner)))
+            })
+            .collect()
     }
 
     /// Reports cycles among the deferred contributions the merge may evaluate
@@ -1968,7 +2088,11 @@ impl<'c> Eval<'c> {
     /// each owner per field, which took 99, 362 and 1390 ms for 800, 1600 and
     /// 3200 fields. Finalizing in dependency order never recurses
     /// along a long chain of dependencies.
-    fn check_cycles(&mut self, top: NodeId, fallback_owners: &BTreeSet<NodeId>) -> R<Vec<NodeId>> {
+    fn dependency_order(
+        &mut self,
+        top: NodeId,
+        fallback_owners: &BTreeSet<NodeId>,
+    ) -> R<Vec<NodeId>> {
         let nodes = self.merge.reached(top);
         let mut index = BTreeMap::new();
         for (i, &n) in nodes.iter().enumerate() {
