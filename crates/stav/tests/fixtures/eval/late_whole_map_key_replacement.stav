@@ -1,0 +1,14 @@
+struct Root {
+  a: Int = 1
+  b: Int = 2
+  m: Map<Str, Map<Str, Int>> = mk0(self.a)
+}
+
+fn mk0(a: Int) -> Map<Str, Map<Str, Int>> = {
+  shared = { old = a }
+  lower = { kept = a }
+}
+
+fn mk1(b: Int) -> Map<Str, Map<Str, Int>> = { shared = { new = b } }
+
+m = mk1(self.b)

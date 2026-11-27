@@ -1,0 +1,18 @@
+struct Download {
+  version: Str
+  url: Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+struct Box { o: Option<Download>, n: Int = 0 }
+struct Root { k: Str = "x", x: Str = "y", cfg: Box }
+
+fn mk(k: Str) -> Box = Box {
+  o = Download { version = "1", url = "u" }
+  n = 3
+}
+
+fn opt(x: Str) -> Option<Download> = none
+
+cfg = default(mk(self.k))
+cfg.o = opt(self.x)
+cfg.o.url = force("higher")

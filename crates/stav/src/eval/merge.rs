@@ -122,6 +122,8 @@ struct Node {
     checked_defaults: bool,
     /// Whether a late whole value was registered here before evaluation.
     late_whole: bool,
+    /// The strongest whole value that replaced lower parts at this boundary.
+    replacement: Option<Prio>,
     state: State,
 }
 
@@ -141,6 +143,7 @@ impl Node {
             defaults: false,
             checked_defaults: false,
             late_whole: false,
+            replacement: None,
             state: State::Open,
         }
     }
@@ -681,26 +684,23 @@ impl<'c> Eval<'c> {
     fn covered(&self, n: NodeId, priority: Prio) -> bool {
         let node = self.merge.node(n);
         let option = self.c.types.unwrap_option(node.ty);
-        if option.is_some() && matches!(self.presence(n), Presence::Absent) {
-            return node.contribs.iter().any(|&id| {
+        let inner = option.unwrap_or_else(|| self.c.types.peel(node.ty));
+        if option.is_some()
+            && node.contribs.iter().any(|&id| {
                 let c = self.merge.contrib(id);
-                c.prio > priority && matches!(c.kind, Kind::Value(Val::None))
-            });
+                c.prio > priority && matches!(c.kind, Kind::Value(Val::None) | Kind::Deferred(_))
+            })
+        {
+            return true;
+        }
+        if matches!(self.c.types.get(inner), Type::Map(_, _)) {
+            return false;
         }
         if node.contribs.iter().any(|&id| {
             let c = self.merge.contrib(id);
             c.prio > priority
                 && match &c.kind {
-                    Kind::Value(value) => !value.is_none(),
-                    Kind::Deferred(_) => !matches!(
-                        self.c.types.get(
-                            self.c
-                                .types
-                                .unwrap_option(node.ty)
-                                .unwrap_or_else(|| self.c.types.peel(node.ty))
-                        ),
-                        Type::Map(_, _)
-                    ),
+                    Kind::Value(_) | Kind::Deferred(_) => true,
                     Kind::Present => {
                         c.complete && matches!(node.shape, Shape::Struct(_) | Shape::Payload(..))
                     }
@@ -710,7 +710,6 @@ impl<'c> Eval<'c> {
         }) {
             return true;
         }
-        let inner = option.unwrap_or_else(|| self.c.types.peel(node.ty));
         let Type::Struct(s) = self.c.types.get(inner) else {
             return false;
         };
@@ -728,12 +727,43 @@ impl<'c> Eval<'c> {
         })
     }
 
-    /// Whether a higher static contribution between `base` and `n`
+    /// Whether a higher contribution replaces lower parts at this path.
+    fn replaced(&self, n: NodeId, priority: Prio) -> bool {
+        self.merge.node(n).replacement.is_some_and(|p| p > priority) || self.covered(n, priority)
+    }
+
+    /// Records a replacement even if its value has no children here.
+    fn replace_lower(&mut self, n: NodeId, priority: Prio) {
+        if self
+            .merge
+            .node(n)
+            .replacement
+            .is_some_and(|p| p >= priority)
+        {
+            return;
+        }
+        self.merge.node_mut(n).replacement = Some(priority);
+        let ids: Vec<u32> = self
+            .merge
+            .node(n)
+            .contribs
+            .iter()
+            .copied()
+            .chain(self.merge.below(n))
+            .collect();
+        for id in ids {
+            if self.merge.contrib(id).prio < priority {
+                self.merge.contribs[id as usize].kind = Kind::Spent;
+            }
+        }
+    }
+
+    /// Whether a higher contribution between `base` and `n`
     /// makes `n` independent of the whole value at `base`.
     fn covered_path(&self, base: NodeId, n: NodeId, priority: Prio) -> bool {
         let mut current = Some(n);
         while let Some(c) = current {
-            if self.covered(c, priority) {
+            if self.replaced(c, priority) {
                 return true;
             }
             if c == base {
@@ -747,14 +777,17 @@ impl<'c> Eval<'c> {
     /// Adds a whole value's supplied parts without replacing missing map keys.
     fn insert_generated(&mut self, base: NodeId, pending: Pending) {
         let mut n = base;
+        if self.replaced(n, pending.contrib.prio) {
+            return;
+        }
         for seg in &pending.path {
-            if self.covered(n, pending.contrib.prio) {
+            n = self.merge.child_or_new(n, seg.clone());
+            if self.replaced(n, pending.contrib.prio) {
                 return;
             }
-            n = self.merge.child_or_new(n, seg.clone());
-        }
-        if self.covered(n, pending.contrib.prio) {
-            return;
+            if pending.contrib.complete && matches!(seg, Seg::Key(_)) {
+                self.replace_lower(n, pending.contrib.prio);
+            }
         }
         let node = self.merge.node(n);
         let inner = self
@@ -766,17 +799,7 @@ impl<'c> Eval<'c> {
             && matches!(pending.contrib.kind, Kind::Present)
             && (self.c.types.as_struct(inner).is_some() || matches!(node.shape, Shape::Payload(..)))
         {
-            let ids: Vec<u32> = node
-                .contribs
-                .iter()
-                .copied()
-                .chain(self.merge.below(n))
-                .collect();
-            for id in ids {
-                if self.merge.contrib(id).prio < pending.contrib.prio {
-                    self.merge.contribs[id as usize].kind = Kind::Spent;
-                }
-            }
+            self.replace_lower(n, pending.contrib.prio);
         }
         self.merge.insert(n, &[], pending.contrib);
     }
@@ -1361,9 +1384,21 @@ impl<'c> Eval<'c> {
             pending.sort_by_key(|&id| std::cmp::Reverse(self.merge.contrib(id).prio));
             for id in pending {
                 let contrib = self.merge.contrib(id).clone();
-                if self.covered(c, contrib.prio) {
+                if self.replaced(c, contrib.prio) {
                     self.merge.contribs[id as usize].kind = Kind::Spent;
                 } else if let Kind::Deferred(deferred) = &contrib.kind {
+                    let ty = self.merge.node(c).ty;
+                    let types = &self.c.types;
+                    let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
+                    if !deferred.reads.is_empty()
+                        && (types.unwrap_option(ty).is_some()
+                            || matches!(
+                                types.get(inner),
+                                Type::Struct(_) | Type::Sum(_) | Type::Data
+                            ))
+                    {
+                        self.replace_lower(c, contrib.prio);
+                    }
                     let out = self.run_deferred(deferred, &contrib)?;
                     self.merge.contribs[id as usize].kind = Kind::Spent;
                     for p in out {
@@ -1756,8 +1791,8 @@ impl<'c> Eval<'c> {
         }
     }
 
-    /// Reports the cycles of the `self` dependencies of the winners at and
-    /// inside `top`, and stops when there is one. Otherwise returns the
+    /// Reports cycles among the deferred contributions the merge may evaluate
+    /// at and inside `top`, and stops when there is one. Otherwise returns the
     /// attributes in an order where each comes after the attributes it
     /// depends on, so that finalizing them in that order never recurses
     /// along a long chain of dependencies.

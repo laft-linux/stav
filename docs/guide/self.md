@@ -220,7 +220,7 @@ warning[W0607]: `self` dependencies form a cycle unless something overrides them
   = help: set one of the attributes without `self` at a higher priority
 ```
 
-If both edges win the merge, evaluation fails with `E0607`. This authoritative check uses winning contributions of each block instance and any potential declared-default fallbacks under late whole values, before resolving late values:
+If both edges win the merge, evaluation fails with `E0607`. This authoritative check uses every contribution that the merge may evaluate in each block instance, including lower whole values whose paths are not covered and potential declared-default fallbacks, before resolving late values:
 
 <!-- run: eval cycle.stav -->
 
@@ -332,6 +332,8 @@ tag = "v2.0"
 ```
 
 A contribution that loses the merge adds no dependency either. When an overlay sets `url = force("...")` to a constant, the default `url` that read `self.version` is discarded, and so is its dependency on `version`.
+
+A lower late whole value still adds its `self` edges when the merge may evaluate it, even if a higher contribution exists at the same node. For example, a declared late whole map default and a higher statement whole map both run to supply their keys, so both reads belong in the graph. A higher whole struct, sum, `Data` or `Option` replaces lower whole values throughout its path. A higher whole option therefore removes the reads of a lower whole at that option path even when it returns `none`. A tagged-block selection does not suppress a late whole sum or remove its reads.
 
 Under a late whole value, declared defaults that might fill an instance created by higher contributions add their edges before the whole value runs. The graph includes these edges even if the whole later supplies the instance and the defaults are unused. This applies to missing map entries, option values and selected variant payloads at every depth, recursively through struct fields, including struct-typed payload fields. Consequently, a cycle can be rejected even when one of its default expressions would never run. The graph must be acyclic before the whole value is evaluated, so it cannot wait to find out which fallbacks are needed. A field reached from a whole value through struct fields only is always supplied. Its default never fills the field and adds no fallback edges.
 

@@ -23,7 +23,7 @@ Every statement form produces contributions:
 
 Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. Map-literal keys cannot read `self` either, including through interpolation, function arguments or late bindings. Map-literal values may read it. These restrictions keep contribution paths independent of merged values. [Expressions and statements](/reference/expressions) describes each statement in full.
 
-A late whole value at a map, struct, sum or `Data` path, including an `Option` of one of these types, permits other contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. Two kinds of contributions are excluded from this check: **all declared field defaults** at or under the path, and a `none` contribution at the `Option` path itself. Declared defaults are fallbacks, and option presence is decided separately. This validation runs before any deferred value is evaluated and never considers its output.
+A late whole value at a map, struct, sum or `Data` path, including an `Option` of one of these types, permits other contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. Two kinds of contributions are excluded from this check: **all declared field defaults** at or under the path, and a `none` contribution at the `Option` path itself. Declared defaults are fallbacks, and option presence is decided separately. Two statement whole values at the same path are E0504 regardless of their priorities: each is a statement contribution that must precede the other. A declared whole default beside a statement whole value is allowed instead. This validation runs before any deferred value is evaluated and never considers its output.
 
 Struct and map literals at statically typed paths split into child contributions instead. A literal assigned to `Data` remains a whole value, so its syntax does not exempt it from the rule. [Late whole values](#late-whole-values) explains how higher contributions combine with a whole value and when it must run.
 
@@ -268,7 +268,7 @@ An eager struct value preserves the record of fields explicitly given when it wa
 
 ### Late whole values
 
-A late whole value **supplies** every path that its value has. A struct is complete and supplies every field, a map supplies only its keys, `none` supplies nothing below its path, and a sum supplies only its own variant's payload. At every depth below a late whole value, fields come from these sources in priority order:
+A late whole value **has** the paths that exist in its value. A struct is complete and has every field, a map has only its keys, `none` has nothing below its path, and a sum has only its own variant's payload. A whole value **supplies** a path it has only when no higher contribution replaces it there or between its own path and that path. At every depth below a late whole value, fields come from these sources in priority order:
 
 1. Higher statement contributions at that path.
 2. Whole values that supply the path, with the higher one first.
@@ -350,13 +350,55 @@ cfg.download.version = force("2")
 
 Here `cfg.download` is present and its default `url` uses version `2`. Returning a present download with `url = "u"` instead would preserve `"u"`.
 
-Several late whole values can supply the same path. For example, `s = default(a(self.x))` and `s.m = b(self.y)` merge the maps at `s.m`: `b` wins shared keys, and keys only in `a` survive. A higher whole struct is complete, so a lower whole value supplies nothing inside that struct.
+A higher late whole struct, sum, `Data` or `Option` replaces lower whole values throughout its path, even when it returns `none` or a different variant. A higher whole map replaces lower values only beneath its own keys. Several late whole values can therefore supply the same map. For example, `s = default(a(self.x))` and `s.m = b(self.y)` merge the maps at `s.m`: `b` wins shared keys, and keys only in `a` survive. A higher whole struct is complete, so a lower whole value supplies nothing inside that struct.
 
-Whether a whole value runs is decided conservatively before evaluating it:
+A late whole value runs unless higher contributions **cover** its own path. Coverage is decided statically:
 
-- A late whole map always runs, because it might supply omitted keys. A higher whole map does not cover a lower one.
-- A late whole struct does not run if higher contributions cover every field. A higher contribution at a field's own path covers it, except for a late whole map or a tagged-block selection. Struct fields can also be covered recursively by covering all their fields.
-- A higher whole attribute contribution of a sum, a higher `Data` value, or a higher `none` at an option's own path suppresses the lower whole value. A tagged-block selection does not suppress it, even when it selects a different variant. See [tagged blocks](#tagged-blocks).
+| Path type | What covers it |
+|---|---|
+| Scalar, list, set or `Data` | Any higher contribution at the path itself |
+| Sum | A higher attribute contribution or late whole sum, never a tagged-block selection |
+| `Option<T>` | A higher `none`, a higher late whole `Option`, or coverage as `T` |
+| Struct | A higher late whole struct, or coverage of every field recursively |
+| Map | Nothing, because lower whole maps may have keys that higher contributions omit |
+
+A covered whole is never evaluated and adds no dependency edges. Every other whole that takes part runs even when a contribution at its own node has a higher priority. In particular, a declared late map default and a higher statement whole map both run and both add their `self` edges. A higher late `Option` replaces the lower one without running it, including when the higher one returns `none`.
+
+<!-- file: late-option-replacement.stav -->
+
+```stav
+struct Download {
+  version: Str
+  url:     Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+struct Box { download: Option<Download>, n: Int = 0 }
+struct Root { key: Str = "x", cfg: Box }
+
+fn lower(key: Str) -> Box = Box { download = Download { version = "1", url = "lower" }, n = 3 }
+fn higher(key: Str) -> Option<Download> = none
+
+cfg                  = default(lower(self.key))
+cfg.download         = higher(self.key)
+cfg.download.version = force("2")
+```
+
+<!-- run: eval late-option-replacement.stav -->
+
+```json
+{
+  "key": "x",
+  "cfg": {
+    "download": {
+      "version": "2",
+      "url": "https://example.org/tool-2.tar.gz"
+    },
+    "n": 3
+  }
+}
+```
+
+The higher whole option replaces the lower download even though it is `none`. The forced version creates a new instance, whose `url` comes from its declared default rather than the lower value. The lower whole still supplies `n`.
 
 The dependency graph includes the `self` edges of declared defaults that might fill a higher-created instance, before any whole value runs. These edges are included even if a whole value later supplies the instance and the defaults are unused. This applies at every depth, recursively through struct fields and struct-typed payload fields. In both examples above, `url` depends on the created download's `version` regardless of what `make` returns. This conservative graph can therefore reject a cycle involving a default that would not run. Fields reached from the whole value through struct fields only always have supplied values, so their defaults add no fallback edges. [Cycles](/guide/self#cycles) explains the instance graph.
 
@@ -789,7 +831,7 @@ The user's `replicas = 8` beats the part's `default(2)`, and both lists of flags
 
 A right side that reads `self`, directly or through a `let` that does, is deferred. It takes part in the merge with its priority like any other contribution, but its value is computed only after the merge has picked the winners, and only after the attributes it reads are final. A deferred contribution that loses to a higher priority is never evaluated.
 
-Before any deferred value is computed, the `self` dependencies of the winners and any potential declared-default fallbacks under late whole values are checked for cycles, block instance by block instance. A cycle is [`E0607`](/reference/error-codes#e0607). [Late-bound self](/guide/self) covers this in detail.
+Before any deferred value is computed, the `self` dependencies of every contribution that the merge may evaluate are checked for cycles, block instance by block instance. This includes winners, lower whole values whose paths are not covered, and potential declared-default fallbacks under late whole values. A cycle is [`E0607`](/reference/error-codes#e0607). [Late-bound self](/guide/self) covers this in detail.
 
 <!-- file: late.stav -->
 

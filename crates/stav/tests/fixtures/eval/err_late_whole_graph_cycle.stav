@@ -1,0 +1,11 @@
+struct Root {
+  a: Int = f(self.m)
+  b: Int = 0
+  m: Map<Str, Int> = mk0(self.a)
+}
+
+fn f(m: Map<Str, Int>) -> Int = 1
+fn mk0(a: Int) -> Map<Str, Int> = { old = a }
+fn mk1(b: Int) -> Map<Str, Int> = { new = b }
+
+m = mk1(self.b)

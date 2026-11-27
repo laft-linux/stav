@@ -1,0 +1,8 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0801]: the required field `cfg.o.version` has no value
+  --> app/main.stav:17:9
+  help: set it, or give the field a default
