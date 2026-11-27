@@ -91,7 +91,7 @@ The first digits of a code name the area it belongs to.
 | [E0604](#e0604) | an index out of range, a missing key or an unknown variant |
 | [E0605](#e0605) | a duplicate computed key in a map literal or comprehension |
 | [E0606](#e0606) | `self` where it cannot be used |
-| [E0607](#e0607) | a cycle of `self` dependencies in a block instance |
+| [E0607](#e0607) | a cycle of `self` dependencies in a block instance or constructed struct value |
 | [E0608](#e0608) | `fail(...)` was called |
 | [E0609](#e0609) | an invalid computed regular expression |
 | [E0610](#e0610) | a recursive function |
@@ -1659,9 +1659,39 @@ error[E0501]: conflicting values for `port`
 
 Keep one of the values, or mark the one that should win with `force(...)`, or the others with `default(...)`.
 
+A nullary tagged selection is a present scalar winner at plain priority. It also conflicts with a deferred `none` of the same priority:
+
+<!-- file: e0501-optional-selection.stav -->
+
+```stav
+type Level = info | warn
+struct Root { x: Int = 0, level: Option<Level> }
+
+fn pick(x: Int) -> Option<Level> = none
+
+level = pick(self.x)
+level warn { }
+```
+
+<!-- run: eval e0501-optional-selection.stav -->
+
+```text
+error[E0501]: conflicting values for `level`
+  ┌─ e0501-optional-selection.stav:6:9
+  │
+6 │ level = pick(self.x)
+  │         ^^^^^^^^^^^^
+  │         │
+  │         none (plain)
+7 │ level warn { }
+  │ -------------- warn (plain)
+  │
+  = help: keep one of them, or mark the one that should win with `force(...)`
+```
+
 ### E0502
 
-Tagged blocks of the same priority select different variants of one sum type.
+Tagged blocks of the same priority select different variants of a sum type that has at least one payload variant. If every variant is nullary, tagged selections merge as scalars and report [E0501](#e0501) instead.
 
 <!-- file: e0502.stav -->
 
@@ -1985,6 +2015,8 @@ Compute the condition from values that are known without merging, such as a `let
 ### E0607
 
 The `self` dependencies of one block instance form a cycle, so a value could depend on itself. This error is reported during evaluation after merging, before resolving late values. The graph contains the dependencies of every contribution the merge may evaluate, including lower whole values whose paths are not covered by higher contributions, and the edges of declared defaults that might fill higher-created instances under a late whole value. Outside every late whole value, declared defaults retain their edges whenever they may run, including ordinary winners and lower whole map defaults. Two ordinary defaults such as `a = self.b` and `b = self.a` therefore form a cycle without any statement contributions. These fallback edges are added at every depth, including through struct fields and struct-typed payload fields, whether or not the defaults end up used. This conservative check can reject a cycle involving an unused default, because the graph must be acyclic before the whole value runs. Direct struct fields that the whole always supplies do not take their defaults and add no fallback edges. Other losing contributions add no dependency, and different instances of the same struct have separate graphs. A body-local cycle produces only the provisional warning [W0607](#w0607) during checking because an overlay can still break it.
+
+The same code also reports a cycle met while building a struct value by an expression, for example inside a list or a function body. A default reads that value's own fields, and reading a field whose default is still running stops evaluation with E0607 citing the struct. Given fields can break such a cycle, so these defaults are not rejected merely because their declaration is cyclic. Each omitted default is computed at most once per construction, and every field is complete before the value is returned. The [self guide](/guide/self#defaults-in-constructed-values) shows both outcomes.
 
 <!-- file: e0607.stav -->
 

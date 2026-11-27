@@ -433,6 +433,17 @@ impl<'c> Eval<'c> {
         let types = &self.c.types;
         let option = types.unwrap_option(ty).is_some();
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
+        if let Type::Sum(s) = types.get(inner)
+            && types.sum(*s).is_nullary()
+        {
+            let ids = self.merge.node(n).contribs.clone();
+            for id in ids {
+                let contrib = &mut self.merge.contribs[id as usize];
+                if let Kind::Select(variant) = contrib.kind {
+                    contrib.kind = Kind::Value(Val::Tag(*s, variant));
+                }
+            }
+        }
         let structural = matches!(
             types.get(inner),
             Type::Struct(_) | Type::Map(_, _) | Type::Data

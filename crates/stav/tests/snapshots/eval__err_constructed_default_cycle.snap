@@ -1,0 +1,8 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0607]: the defaults of `S` read each other through `self` in a cycle
+  --> app/main.stav:1:38
+  label: app/main.stav:6:6: in this call of `mk`

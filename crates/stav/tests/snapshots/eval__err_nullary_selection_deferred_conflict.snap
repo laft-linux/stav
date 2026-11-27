@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0501]: conflicting values for `level`
+  --> app/main.stav:4:9
+  label: app/main.stav:4:9: info (plain)
+  label: app/main.stav:5:1: warn (plain)
+  help: keep one of them, or mark the one that should win with `force(...)`

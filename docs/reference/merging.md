@@ -189,9 +189,9 @@ fn pick(x: Int) -> Mode = fast
 fn opt(x: Int) -> Option<Mode> = fast
 
 mode = pick(self.x)
-mode = fast
-o    = opt(self.x)
-o    = fast
+mode fast { }
+o = opt(self.x)
+o fast { }
 ```
 
 <!-- run: eval nullary-late.stav -->
@@ -293,7 +293,7 @@ name = "a"
 port = 80
 ```
 
-Inside a list, a struct literal is a complete value. Its omitted fields take their declared defaults right away, as `port` does in `servers` above.
+Inside a list, a struct literal is a complete value. Its omitted fields take their declared defaults right away, as `port` does in `servers` above. These defaults read the constructed value's own fields through `self`, never an enclosing block. Each omitted default is computed at most once per construction, when first read. Reading a default that is still running stops evaluation with [E0607](/reference/error-codes#e0607), citing the struct. All fields are complete before the value is returned. These are not merge-instance dependency edges. The [self guide](/guide/self#defaults-in-constructed-values) shows the distinction.
 
 An eager struct value preserves the record of fields explicitly given when it was constructed, through bindings, parameters and function results. Assigned to an attribute, it contributes only those fields, recursively. Fields filled by defaults contribute nothing and can take their defaults again after merging. A late whole value instead treats every field as given, including fields computed from defaults inside its constructor. The [`self` guide](/guide/self#late-and-eager-struct-values) compares the two.
 
@@ -542,7 +542,9 @@ Writing `tls = default(none)` instead lets the block win.
 
 ### Tagged blocks
 
-A field whose type is a sum type can be set with a tagged block, such as `build native { features = ["simd"] }`. The label names the variant, and the body sets its payload fields. A tagged block makes two kinds of contributions:
+A field whose type is a sum type can be set with a tagged block, such as `build native { features = ["simd"] }`. The label names the variant, and the body sets its payload fields. When every variant is nullary, a tagged block contributes only its variant at plain priority. It merges as a scalar, so different winners report [E0501](/reference/error-codes#e0501), whether they come from attributes, deferred expressions or other tagged blocks.
+
+For a sum with at least one payload variant, a tagged block makes two kinds of contributions:
 
 - a **selection** of the variant, at plain priority,
 - one contribution per payload attribute, each at its own priority.

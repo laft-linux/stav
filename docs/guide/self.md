@@ -114,6 +114,66 @@ error[E0303]: no enclosing block has a field `label`
 
 Inside a part or a part file, the search stops at the struct of the part. A part cannot reach the blocks around the place where it is included.
 
+## Defaults in constructed values
+
+A struct value built by an expression is separate from a merged block instance. This includes literals inside lists and values returned by functions. In an omitted field's default, `self.g` reads `g` of that constructed value, not a matching field in an enclosing block. An explicitly given field is already available. Otherwise its own default is computed when first read and reused for the rest of that construction.
+
+<!-- file: constructed-defaults.stav -->
+
+```stav
+struct S { a: Int = self.b, b: Int = self.a }
+struct Root { a: Int = 90, b: Int = 99, l: List<S> }
+
+l = [S { a = 1 }, S { b = 2 }]
+```
+
+<!-- run: eval constructed-defaults.stav -->
+
+```json
+{
+  "a": 90,
+  "b": 99,
+  "l": [
+    {
+      "a": 1,
+      "b": 1
+    },
+    {
+      "a": 2,
+      "b": 2
+    }
+  ]
+}
+```
+
+Each construction has its own fields. Neither reads `Root.a` or `Root.b`. Given fields can break a cycle among declared defaults, so the declaration itself is not rejected. If a construction does encounter a default that is still running, evaluation stops with E0607 citing the struct:
+
+<!-- file: constructed-cycle.stav -->
+
+```stav
+struct S { a: Int = self.b, b: Int = self.a }
+struct Root { l: List<S> }
+
+fn mk() -> S = S {}
+
+l = [mk()]
+```
+
+<!-- run: eval constructed-cycle.stav -->
+
+```text
+error[E0607]: the defaults of `S` read each other through `self` in a cycle
+  ┌─ constructed-cycle.stav:1:38
+  │
+1 │ struct S { a: Int = self.b, b: Int = self.a }
+  │                                      ^^^^^^
+  ·
+6 │ l = [mk()]
+  │      ---- in this call of `mk`
+```
+
+The merged-instance dependency graph does not inspect these expression-built values. Their defaults are checked for cycles during construction. Every omitted default runs at most once per construction, and all fields are complete before the constructed value is returned. This preserves eager evaluation while ensuring that reads among a construction's defaults cannot loop.
+
 ## `let` bindings that read `self`
 
 A `let` statement in a body may read `self` as well. Every right-hand side that uses the binding is then late too:

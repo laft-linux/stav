@@ -50,6 +50,49 @@ fn lower_whole_dependency_cycles_finish_before_evaluation() {
             "E0607",
             &["`a` reads `b`", "`b` reads `a`"],
         );
+        let mut fields: Vec<String> = (0..20)
+            .map(|i| format!("f{i}: Int = self.f{} + self.f{}", i + 1, i + 1))
+            .collect();
+        fields.push("f20: Int = 1".to_owned());
+        let source = format!(
+            "struct S {{ {} }}\nstruct Root {{ l: List<S> }}\nl = [S {{}}]\n",
+            fields.join(", ")
+        );
+        assert_eq!(evaluate(&source).unwrap()["l"][0]["f0"], json!(1 << 20));
+        for construction in ["mk()", "S {}"] {
+            let source = format!(
+                "struct S {{ a: Int = self.b, b: Int = self.a }}\n\
+                 fn mk() -> S = S {{}}\n\
+                 struct Root {{ l: List<S> }}\nl = [{construction}]\n"
+            );
+            assert_error(&source, "E0607", &["the defaults of `S`"]);
+        }
+        assert_error(
+            "struct S { a: Int = self.a }\n\
+             struct Root { l: List<S> }\nl = [S {}]",
+            "E0607",
+            &["the defaults of `S`"],
+        );
+        assert_error(
+            "struct S { a: Int = self.b, b: Int = self.a }\n\
+             struct Box { s: S = S {} }\n\
+             struct Root { l: List<Box> }\nl = [Box {}]",
+            "E0607",
+            &["the defaults of `S`"],
+        );
+        assert_error(
+            "struct S { a: Int = self.b, b: Int = self.a }\n\
+             struct Root { l: List<S> }\nl = [S { a = 1 }, S {}]",
+            "E0607",
+            &["the defaults of `S`"],
+        );
+        assert_error(
+            "struct S { a: Int = 1 / 0 }\n\
+             fn ignore(s: S) -> Int = 1\n\
+             struct Root { n: Int }\nn = ignore(S {})",
+            "E0603",
+            &[],
+        );
         for (a, b, edges) in [
             ("f(self.m)", "0", ["`a` reads `m`", "`m` reads `a`"]),
             ("0", "f(self.m)", ["`b` reads `m`", "`m` reads `b`"]),

@@ -1,0 +1,5 @@
+type Level = debug | info | warn | error
+fn pick(x: Int) -> Level = if x == 0 { info } else { error }
+struct Root { x: Int = 0, level: Level }
+level = pick(self.x)
+level warn {}

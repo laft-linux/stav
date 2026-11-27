@@ -1,0 +1,5 @@
+struct S { a: Int, b: Int = self.a + 1, c: Int = self.b + self.b }
+struct Box { s: S = S { a = 3 }, n: Int = self.s.c }
+struct Root { a: Int = 90, b: Int = 99, l: List<Box> }
+fn mk(a: Int) -> Box = Box { s = S { a = a } }
+l = [Box {}, mk(4), Box { s = S { a = 5 } }, mk(6)]

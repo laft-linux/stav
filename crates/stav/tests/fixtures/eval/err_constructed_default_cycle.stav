@@ -1,0 +1,6 @@
+struct S { a: Int = self.b, b: Int = self.a }
+struct Root { l: List<S> }
+
+fn mk() -> S = S {}
+
+l = [mk()]
