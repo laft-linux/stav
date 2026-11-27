@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0501]: conflicting values for `mode`
+  --> app/main.stav:7:8
+  label: app/main.stav:7:8: slow (plain)
+  label: app/main.stav:8:8: fast (plain)
+  help: keep one of them, or mark the one that should win with `force(...)`

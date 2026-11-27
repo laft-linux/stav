@@ -33,6 +33,23 @@ fn assert_error(source: &str, code: &str, edges: &[&str]) {
 fn lower_whole_dependency_cycles_finish_before_evaluation() {
     const CHILD: &str = "STAV_WHOLE_CYCLE_CHILD";
     if std::env::var_os(CHILD).is_some() {
+        assert_error(
+            "struct Root { a: Int = self.b, b: Int = self.a }",
+            "E0607",
+            &["`a` reads `b`", "`b` reads `a`"],
+        );
+        assert_error(
+            "struct S { a: Int = self.b, b: Int = self.a }\n\
+             struct Root { s: S = {} }",
+            "E0607",
+            &["`s.a` reads `s.b`", "`s.b` reads `s.a`"],
+        );
+        assert_error(
+            "struct Root { a: Int = self.b, b: Int = self.a, zero: Int = 0, z: Int }\n\
+             fn bad(z: Int) -> Int = 1 / z\nz = bad(self.zero)",
+            "E0607",
+            &["`a` reads `b`", "`b` reads `a`"],
+        );
         for (a, b, edges) in [
             ("f(self.m)", "0", ["`a` reads `m`", "`m` reads `a`"]),
             ("0", "f(self.m)", ["`b` reads `m`", "`m` reads `b`"]),
@@ -130,6 +147,20 @@ fn declared_and_statement_map_wholes_both_supply_entries() {
 fn higher_wholes_cover_lower_defaults_without_adding_losing_edges() {
     for (ty, declarations, low, high, expected) in [
         ("Int", "", "1 / a", "2", json!(2)),
+        (
+            "Mode",
+            "type Mode = fast | slow",
+            "if 1 / a == 0 { slow } else { slow }",
+            "fast",
+            json!("fast"),
+        ),
+        (
+            "Option<Mode>",
+            "type Mode = fast | slow",
+            "if 1 / a == 0 { slow } else { slow }",
+            "none",
+            Value::Null,
+        ),
         ("List<Int>", "", "[1 / a]", "[2]", json!([2])),
         ("Set<Int>", "", "[1 / a]", "[2]", json!([2])),
         (
@@ -360,11 +391,12 @@ fn deferred_optional_winners_distinguish_all_none_from_mixed_presence() {
         ("List<Str>", "[\"b\"]", json!(["b", "b"])),
         ("Set<Str>", "[\"b\"]", json!(["b"])),
         ("Str", "\"b\"", json!("b")),
+        ("Mode", "fast", json!("fast")),
     ] {
         for f in ["none", present] {
             for g in ["none", present] {
                 let source = format!(
-                    "struct Root {{ x: Int = 0, y: Int = 0, o: Option<{ty}> }}\n\
+                    "type Mode = fast | slow\nstruct Root {{ x: Int = 0, y: Int = 0, o: Option<{ty}> }}\n\
                      fn f(x: Int) -> Option<{ty}> = {f}\n\
                      fn g(y: Int) -> Option<{ty}> = {g}\n\
                      o = f(self.x)\no = g(self.y)\n"
@@ -388,9 +420,9 @@ fn deferred_optional_winners_distinguish_all_none_from_mixed_presence() {
 
 #[test]
 fn literal_none_conflicts_with_deferred_winners_without_evaluation() {
-    for ty in ["Str", "List<Str>", "Set<Str>", "Int"] {
+    for ty in ["Str", "List<Str>", "Set<Str>", "Int", "Mode"] {
         let source = format!(
-            "struct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
+            "type Mode = fast | slow\nstruct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
              fn f(x: Int) -> Option<{ty}> = if 1 / x == 0 {{ none }} else {{ none }}\n\
              o = f(self.x)\no = none\n"
         );
@@ -405,10 +437,11 @@ fn losing_optional_deferred_values_never_run() {
         ("List<Str>", "[\"a\"]", json!(["a"])),
         ("Set<Str>", "[\"a\"]", json!(["a"])),
         ("Int", "1", json!(1)),
+        ("Mode", "fast", json!("fast")),
     ] {
         for winner in ["none", present] {
             let source = format!(
-                "struct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
+                "type Mode = fast | slow\nstruct Root {{ x: Int = 0, o: Option<{ty}> }}\n\
                  fn f(x: Int) -> Option<{ty}> = if 1 / x == 0 {{ none }} else {{ none }}\n\
                  o = default(f(self.x))\no = {winner}\n"
             );
@@ -466,5 +499,206 @@ fn struct_wholes_suppress_all_declared_defaults_along_struct_fields() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn ordinary_declared_defaults_keep_only_winning_edges() {
+    for (declarations, statement, expected) in [
+        (
+            "struct Root { a: Int = self.b, b: Int = self.a }",
+            "b = force(7)",
+            json!({"a": 7, "b": 7}),
+        ),
+        (
+            "struct S { a: Int = self.b, b: Int = self.a }\nstruct Root { s: S = {} }",
+            "s.b = force(7)",
+            json!({"s": {"a": 7, "b": 7}}),
+        ),
+        (
+            "struct Root { a: Int = self.b, b: Int = self.c, c: Int = 7 }",
+            "",
+            json!({"a": 7, "b": 7, "c": 7}),
+        ),
+    ] {
+        assert_eq!(
+            evaluate(&format!("{declarations}\n{statement}")).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn deferred_nullary_sums_merge_equal_priority_winners_as_scalars() {
+    for ty in ["Mode", "Option<Mode>"] {
+        for result in ["fast", "slow", "none"] {
+            if ty == "Mode" && result == "none" {
+                continue;
+            }
+            let source = format!(
+                "type Mode = fast | slow\n\
+                 struct Root {{ x: Int = 0, mode: {ty} }}\n\
+                 fn pick(x: Int) -> {ty} = {result}\n\
+                 mode = pick(self.x)\nmode = fast\n"
+            );
+            if result == "fast" {
+                assert_eq!(evaluate(&source).unwrap()["mode"], json!("fast"));
+            } else {
+                assert_error(&source, "E0501", &[]);
+            }
+        }
+    }
+}
+
+#[test]
+fn equal_priority_nullary_sum_calls_are_evaluated() {
+    for ty in ["Mode", "Option<Mode>"] {
+        let source = format!(
+            "type Mode = fast | slow\n\
+             struct Root {{ x: Int = 0, mode: {ty} }}\n\
+             fn pick(x: Int) -> {ty} = if 1 / x == 0 {{ fast }} else {{ slow }}\n\
+             mode = pick(self.x)\nmode = fast\n"
+        );
+        assert_error(&source, "E0603", &[]);
+    }
+}
+
+#[test]
+fn higher_nullary_sum_contributions_remove_losing_reads_and_calls() {
+    for ty in ["Mode", "Option<Mode>"] {
+        for (left, right) in [
+            ("default(pick(self.x))", "fast"),
+            ("pick(self.x)", "force(fast)"),
+        ] {
+            let source = format!(
+                "type Mode = fast | slow\n\
+                 struct Root {{ x: Int = read(self.mode), mode: {ty} }}\n\
+                 fn read(mode: {ty}) -> Int = 0\n\
+                 fn pick(x: Int) -> {ty} = if 1 / x == 0 {{ fast }} else {{ slow }}\n\
+                 mode = {left}\nmode = {right}\n"
+            );
+            assert_eq!(evaluate(&source).unwrap()["mode"], json!("fast"));
+        }
+    }
+}
+
+#[test]
+fn nullary_variants_of_payload_sums_still_require_static_whole_validation() {
+    for declaration in [
+        "type Mode = fast | slow(n: Int)",
+        "type Mode = fast | slow()",
+    ] {
+        for ty in ["Mode", "Option<Mode>"] {
+            let source = format!(
+                "{declaration}\n\
+                 struct Root {{ x: Int = 0, mode: {ty} }}\n\
+                 fn pick(x: Int) -> {ty} = if 1 / x == 0 {{ fast }} else {{ fast }}\n\
+                 mode = pick(self.x)\nmode = fast\n"
+            );
+            assert_error(&source, "E0504", &[]);
+        }
+    }
+}
+
+#[test]
+fn imported_nullary_sum_types_merge_as_scalars_inside_options() {
+    let host = Host::new(
+        MemoryLoader::new()
+            .with_file("app/types.stav", "type Mode = fast | slow\n")
+            .with_file(
+                "app/main.stav",
+                "import \"./types.stav\" as types\n\
+                 struct Root { x: Int = 0, mode: types.Mode, o: Option<types.Mode> }\n\
+                 fn pick(x: Int) -> types.Mode = types.Mode.fast\n\
+                 fn opt(x: Int) -> Option<types.Mode> = types.Mode.fast\n\
+                 mode = pick(self.x)\nmode = types.Mode.fast\n\
+                 o = opt(self.x)\no = types.Mode.fast\n",
+            ),
+    );
+    let root = RootSpec {
+        root_struct: "Root".to_owned(),
+        entries: vec!["app/main.stav".into()],
+        import_roots: vec![ImportRoot::new("app")],
+    };
+    let checked = check(&host, &root).expect("imported types check");
+    let value = checked
+        .eval(&Limits::default())
+        .expect("equal winners merge");
+    let value: Value = serde_json::from_str(&value.to_canonical_json()).unwrap();
+    assert_eq!(value["mode"], json!("fast"));
+    assert_eq!(value["o"], json!("fast"));
+}
+
+#[test]
+fn nullary_sum_winners_follow_every_scalar_priority_pair() {
+    for ty in ["Mode", "Option<Mode>"] {
+        for (left_priority, left) in [
+            "default(pick(self.x))",
+            "pick(self.x)",
+            "force(pick(self.x))",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (right_priority, right) in ["default(slow)", "slow", "force(slow)"]
+                .into_iter()
+                .enumerate()
+            {
+                let source = format!(
+                    "type Mode = fast | slow\n\
+                     struct Root {{ x: Int = 0, mode: {ty} }}\n\
+                     fn pick(x: Int) -> {ty} = fast\n\
+                     mode = {left}\nmode = {right}\n"
+                );
+                match left_priority.cmp(&right_priority) {
+                    std::cmp::Ordering::Equal => assert_error(&source, "E0501", &[]),
+                    std::cmp::Ordering::Greater => {
+                        assert_eq!(evaluate(&source).unwrap()["mode"], json!("fast"));
+                    }
+                    std::cmp::Ordering::Less => {
+                        assert_eq!(evaluate(&source).unwrap()["mode"], json!("slow"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn refined_nullary_sum_paths_still_merge_scalar_winners() {
+    for ty in [
+        "Mode where valid",
+        "Option<Mode where valid>",
+        "Option<Mode> where valid_option",
+    ] {
+        for result in ["fast", "slow"] {
+            let source = format!(
+                "type Mode = fast | slow\n\
+                 fn valid(mode: Mode) -> Bool = true\n\
+                 fn valid_option(mode: Option<Mode>) -> Bool = true\n\
+                 struct Root {{ x: Int = 0, mode: {ty} }}\n\
+                 fn pick(x: Int) -> {ty} = {result}\n\
+                 mode = pick(self.x)\nmode = fast\n"
+            );
+            if result == "fast" {
+                assert_eq!(evaluate(&source).unwrap()["mode"], json!("fast"));
+            } else {
+                assert_error(&source, "E0501", &[]);
+            }
+        }
+    }
+}
+
+#[test]
+fn higher_nullary_tagged_selections_cover_losing_deferred_values() {
+    for ty in ["Mode", "Option<Mode>"] {
+        let source = format!(
+            "type Mode = fast | slow\n\
+             struct Root {{ x: Int = read(self.mode), mode: {ty} }}\n\
+             fn read(mode: {ty}) -> Int = 0\n\
+             fn pick(x: Int) -> {ty} = if 1 / x == 0 {{ fast }} else {{ slow }}\n\
+             mode = default(pick(self.x))\nmode fast {{}}\n"
+        );
+        assert_eq!(evaluate(&source).unwrap()["mode"], json!("fast"));
     }
 }

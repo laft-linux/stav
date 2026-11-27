@@ -23,7 +23,9 @@ Every statement form produces contributions:
 
 Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. Map-literal keys cannot read `self` either, including through interpolation, function arguments or late bindings. Map-literal values may read it. These restrictions keep contribution paths independent of merged values. [Expressions and statements](/reference/expressions) describes each statement in full.
 
-A late whole value at a map, struct, sum or `Data` path, including an `Option` of one of these types, permits other contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. Two kinds of contributions are excluded from this check: **all declared field defaults** at or under the path, and a `none` contribution at the `Option` path itself. Declared defaults are fallbacks, and option presence is decided separately. Two statement whole values at the same path are E0504 regardless of their priorities: each is a statement contribution that must precede the other. A declared whole default beside a statement whole value is allowed instead. This validation runs before any deferred value is evaluated and never considers its output.
+A late whole value at a map, struct, payload sum or `Data` path, including an `Option` of one of these types, permits other contributions at or below its path only when they have strictly higher priority. Equal or lower priority contributions report [E0504](/reference/error-codes#e0504), citing both sources. Two kinds of contributions are excluded from this check: **all declared field defaults** at or under the path, and a `none` contribution at the `Option` path itself. Declared defaults are fallbacks, and option presence is decided separately. For these types, two statement whole values at the same path are E0504 regardless of their priorities: each is a statement contribution that must precede the other. A declared whole default beside a statement whole value is allowed instead. This validation runs before any deferred value is evaluated and never considers its output.
+
+A nullary sum, whose variants have no payload, is a scalar and is never subject to E0504, including inside an `Option`. A sum with even one payload variant remains subject to the rule, including when the contribution produces a nullary variant.
 
 Struct and map literals at statically typed paths split into child contributions instead. A literal assigned to `Data` remains a whole value, so its syntax does not exempt it from the rule. [Late whole values](#late-whole-values) explains how higher contributions combine with a whole value and when it must run.
 
@@ -174,6 +176,35 @@ error[E0501]: conflicting values for `hostname`
 ```
 
 To resolve it, remove one of the contributions, mark the one that should win with `force(...)`, or mark the one that should give way with `default(...)`.
+
+Nullary sums keep their scalar rules even when a winner is deferred:
+
+<!-- file: nullary-late.stav -->
+
+```stav
+type Mode = fast | slow
+struct Root { x: Int = 0, mode: Mode, o: Option<Mode> }
+
+fn pick(x: Int) -> Mode = fast
+fn opt(x: Int) -> Option<Mode> = fast
+
+mode = pick(self.x)
+mode = fast
+o    = opt(self.x)
+o    = fast
+```
+
+<!-- run: eval nullary-late.stav -->
+
+```json
+{
+  "x": 0,
+  "mode": "fast",
+  "o": "fast"
+}
+```
+
+Both deferred functions run. Returning `slow` would give E0501 rather than E0504. Returning `none` from `opt` also conflicts with the present `fast` winner. A higher contribution instead suppresses the losing deferred expression and its `self` edges, as for any scalar.
 
 ### Lists and sets
 
@@ -356,8 +387,8 @@ A late whole value runs unless higher contributions **cover** its own path. Cove
 
 | Path type | What covers it |
 |---|---|
-| Scalar, list, set or `Data` | Any higher contribution at the path itself |
-| Sum | A higher attribute contribution or late whole sum, never a tagged-block selection |
+| Scalar (including a nullary sum), list, set or `Data` | Any higher contribution at the path itself |
+| Sum with a payload variant | A higher attribute contribution or late whole sum, never a tagged-block selection |
 | `Option<T>` | A higher `none`, a higher late whole `Option`, or coverage as `T` |
 | Struct | A higher late whole struct, or coverage of every field recursively |
 | Map | Nothing, because lower whole maps may have keys that higher contributions omit |
@@ -587,9 +618,11 @@ error[E0502]: tagged blocks select different variants of `jobs.c.build`
 
 A payload sum set only through whole values, such as `build = script(target = "x")`, merges like a scalar.
 
-A late whole sum also obeys [E0504](/reference/error-codes#e0504). Every other competing static contribution at or below its path must have strictly higher priority. Declared defaults remain excluded from that check. In particular, a plain tagged-block selection cannot coexist with a plain or forced late whole value, even if both would select the same variant. This is checked before any deferred expression runs and does not depend on the variant produced.
+A late whole sum with a payload variant also obeys [E0504](/reference/error-codes#e0504). Every other competing static contribution at or below its path must have strictly higher priority. Declared defaults remain excluded from that check. In particular, a plain tagged-block selection cannot coexist with a plain or forced late whole value, even if both would select the same variant. This is checked before any deferred expression runs and does not depend on the variant produced.
 
-A strictly higher tagged-block selection does not suppress a late whole value. If the whole value returns the selected variant, its payload fills fields that the higher contributions leave. If it returns a different variant, that payload is discarded, and the selected payload takes its fallbacks from declared defaults. This applies at the whole value's own path and at sum fields nested below it:
+A higher selection of a nullary sum covers the path like any other higher scalar contribution.
+
+For a sum with a payload variant, a strictly higher tagged-block selection does not suppress a late whole value. If the whole value returns the selected variant, its payload fills fields that the higher contributions leave. If it returns a different variant, that payload is discarded, and the selected payload takes its fallbacks from declared defaults. This applies at the whole value's own path and at sum fields nested below it:
 
 <!-- file: late-tagged-default.stav -->
 
@@ -869,7 +902,7 @@ The user's `replicas = 8` beats the part's `default(2)`, and both lists of flags
 
 A right side that reads `self`, directly or through a `let` that does, is deferred. It takes part in the merge with its priority like any other contribution, but its value is computed only after the merge has picked the winners, and only after the attributes it reads are final. A deferred contribution that loses to a higher priority is never evaluated.
 
-Before any deferred value is computed, the `self` dependencies of every contribution that the merge may evaluate are checked for cycles, block instance by block instance. This includes winners, lower whole values whose paths are not covered, and potential declared-default fallbacks under late whole values. A cycle is [`E0607`](/reference/error-codes#e0607). [Late-bound self](/guide/self) covers this in detail.
+Before any deferred value is computed, the `self` dependencies of every contribution that the merge may evaluate are checked for cycles, block instance by block instance. This includes winners, lower whole values whose paths are not covered, and potential declared-default fallbacks under late whole values. Outside late whole values, declared defaults retain their edges whenever they may run, including ordinary winning defaults and lower whole map defaults that may supply omitted keys. A cycle is [`E0607`](/reference/error-codes#e0607). [Late-bound self](/guide/self) covers this in detail.
 
 <!-- file: late.stav -->
 

@@ -156,9 +156,9 @@ release = "testing"
 
 These positions decide which contributions exist, or they would let a function depend on where it is called. The restriction also applies through interpolations, function arguments and bindings that read `self`. Map-literal values may still read it. A struct-typed payload field still brings in that struct's field defaults, which may read `self`.
 
-A late whole map, struct, sum or `Data` value may have other contributions at or below its path only when they have strictly higher priority, including through an `Option`. [E0504](/reference/error-codes#e0504) checks this before any deferred value runs. It excludes all declared defaults at or below the path, and a `none` contribution at the option's own path. Struct and map literals split into children at statically typed paths instead. Literals assigned to `Data` stay whole. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
+A late whole map, struct, payload sum or `Data` value may have other contributions at or below its path only when they have strictly higher priority, including through an `Option`. [E0504](/reference/error-codes#e0504) checks this before any deferred value runs. It excludes all declared defaults at or below the path, and a `none` contribution at the option's own path. Struct and map literals split into children at statically typed paths instead. Literals assigned to `Data` stay whole. Map keys cannot read `self` in any context, including inside lists, function arguments and `Data`.
 
-Higher contributions win at their own paths. The whole supplies the remaining fields, map keys and matching variant payloads. Declared defaults fill only instances that higher contributions create and no whole value supplies, such as a missing map entry, an option value where the whole returns `none`, or a selected payload of another variant. This applies at every depth, including inside a whole struct. A late whole struct need not run if higher contributions cover every field recursively. A late whole map always runs, because it might supply omitted keys. A tagged-block selection also leaves the whole eligible to run: a matching payload survives, while a different variant is discarded. A higher whole attribute contribution of a sum replaces it instead. [Merging rules](/reference/merging#late-whole-values) gives examples and the full coverage rules.
+Higher contributions win at their own paths. The whole supplies the remaining fields, map keys and matching variant payloads. Declared defaults fill only instances that higher contributions create and no whole value supplies, such as a missing map entry, an option value where the whole returns `none`, or a selected payload of another variant. This applies at every depth, including inside a whole struct. A late whole struct need not run if higher contributions cover every field recursively. A late whole map always runs, because it might supply omitted keys. For a sum with a payload variant, a tagged-block selection also leaves the whole eligible to run: a matching payload survives, while a different variant is discarded. A higher whole attribute contribution of a sum replaces it instead. [Merging rules](/reference/merging#late-whole-values) gives examples and the full coverage rules.
 
 Using `self` in a structural position is an error:
 
@@ -333,9 +333,33 @@ tag = "v2.0"
 
 A contribution that loses the merge adds no dependency either. When an overlay sets `url = force("...")` to a constant, the default `url` that read `self.version` is discarded, and so is its dependency on `version`.
 
-A lower late whole value still adds its `self` edges when the merge may evaluate it, even if a higher contribution exists at the same node. For example, a declared late whole map default and a higher statement whole map both run to supply their keys, so both reads belong in the graph. A higher whole struct, sum, `Data` or `Option` replaces lower whole values throughout its path. A higher whole option therefore removes the reads of a lower whole at that option path even when it returns `none`. A tagged-block selection does not suppress a late whole sum or remove its reads.
+A lower late whole value still adds its `self` edges when the merge may evaluate it, even if a higher contribution exists at the same node. For example, a declared late whole map default and a higher statement whole map both run to supply their keys, so both reads belong in the graph. A higher whole struct, sum, `Data` or `Option` replaces lower whole values throughout its path. A higher whole option therefore removes the reads of a lower whole at that option path even when it returns `none`. A tagged-block selection does not suppress a late whole payload sum or remove its reads. Nullary sums merge as scalars instead: equal-priority deferred winners run and must agree, and any higher contribution covers the path, including a tagged selection. E0504 does not apply to them or their optional forms.
 
 Under a late whole value, declared defaults that might fill an instance created by higher contributions add their edges before the whole value runs. The graph includes these edges even if the whole later supplies the instance and the defaults are unused. This applies to missing map entries, option values and selected variant payloads at every depth, recursively through struct fields, including struct-typed payload fields. Consequently, a cycle can be rejected even when one of its default expressions would never run. The graph must be acyclic before the whole value is evaluated, so it cannot wait to find out which fallbacks are needed. A late whole value whose own type is a struct guarantees that instance and every instance reached through struct-typed fields. Their declared defaults never fill fields, never run and add no edges, including defaults that are themselves late whole maps or would otherwise win at their nodes. This uses paths and types alone. A whole value at an `Option` path does not provide this guarantee, even for `Option<Struct>`, because it may return `none`. Neither does a whole map or sum, nor a whole value above an option, map entry or variant on the path to the instance.
+
+Declared defaults outside late whole values keep every dependency the merge may evaluate. The fallback rules above do not remove the edges of ordinary winning defaults or of lower whole map defaults that may still supply keys. This program therefore fails before deferred evaluation:
+
+<!-- file: declared-cycle.stav -->
+
+```stav
+struct Root { a: Int = self.b, b: Int = self.a }
+```
+
+<!-- run: eval declared-cycle.stav -->
+
+```text
+error[E0607]: `self` dependencies form a cycle
+  ┌─ declared-cycle.stav:1:24
+  │
+1 │ struct Root { a: Int = self.b, b: Int = self.a }
+  │                        ^^^^^^           ------ `b` reads `a`
+  │                        │                 
+  │                        `a` reads `b`
+  │
+  = note: cycle: a -> b -> a
+```
+
+A higher constant contribution to either field removes its losing default and breaks the cycle.
 
 ## How it fits with eager evaluation
 

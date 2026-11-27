@@ -1,0 +1,4 @@
+struct Root {
+  a: Int = self.b
+  b: Int = self.a
+}

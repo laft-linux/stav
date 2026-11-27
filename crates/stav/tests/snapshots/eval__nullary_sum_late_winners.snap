@@ -1,0 +1,12 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "x": 0,
+  "mode": "fast",
+  "optional": "fast",
+  "absent": null,
+  "covered": "fast"
+}

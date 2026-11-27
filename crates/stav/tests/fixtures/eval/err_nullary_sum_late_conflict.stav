@@ -1,0 +1,8 @@
+type Mode = fast | slow
+
+struct Root { x: Int = 0, mode: Mode }
+
+fn pick(x: Int) -> Mode = slow
+
+mode = pick(self.x)
+mode = fast

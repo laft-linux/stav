@@ -1,0 +1,23 @@
+type Mode = fast | slow
+
+struct Root {
+  x: Int = 0
+  mode: Mode
+  optional: Option<Mode>
+  absent: Option<Mode>
+  covered: Mode
+}
+
+fn pick(x: Int) -> Mode = fast
+fn present(x: Int) -> Option<Mode> = fast
+fn absent(x: Int) -> Option<Mode> = none
+fn losing(x: Int) -> Mode = if 1 / x == 0 { slow } else { slow }
+
+mode = pick(self.x)
+mode = fast
+optional = present(self.x)
+optional = fast
+absent = absent(self.x)
+absent = absent(self.x)
+covered = default(losing(self.x))
+covered = fast

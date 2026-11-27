@@ -433,10 +433,11 @@ impl<'c> Eval<'c> {
         let types = &self.c.types;
         let option = types.unwrap_option(ty).is_some();
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
-        if matches!(
+        let structural = matches!(
             types.get(inner),
-            Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
-        ) {
+            Type::Struct(_) | Type::Map(_, _) | Type::Data
+        ) || matches!(types.get(inner), Type::Sum(s) if !types.sum(*s).is_nullary());
+        if structural {
             let node = self.merge.node(n);
             let late_whole = node.contribs.iter().chain(&node.checks).any(|&id| {
                 matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if !d.reads.is_empty())
@@ -451,10 +452,7 @@ impl<'c> Eval<'c> {
                 }
                 Presence::Conflict(ids) => {
                     let whole_conflict = !self.merge.static_checked
-                        && matches!(
-                            self.c.types.get(inner),
-                            Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
-                        )
+                        && structural
                         && self.whole_conflict(n).is_some();
                     if !whole_conflict {
                         self.conflict(n, &ids, "E0501");
@@ -566,7 +564,10 @@ impl<'c> Eval<'c> {
             .unwrap_or_else(|| self.c.types.peel(ty));
         if matches!(
             self.c.types.get(inner),
-            Type::Struct(_) | Type::Map(_, _) | Type::Sum(_) | Type::Data
+            Type::Struct(_) | Type::Map(_, _) | Type::Data
+        ) || matches!(
+            self.c.types.get(inner),
+            Type::Sum(s) if !self.c.types.sum(*s).is_nullary()
         ) {
             if let Some(ids) = self.whole_conflict(n) {
                 self.conflict(n, &ids, "E0504");
@@ -704,7 +705,13 @@ impl<'c> Eval<'c> {
                     Kind::Present => {
                         c.complete && matches!(node.shape, Shape::Struct(_) | Shape::Payload(..))
                     }
-                    Kind::Select(_) => self.merge.attributes.contains(&id),
+                    Kind::Select(_) => {
+                        self.merge.attributes.contains(&id)
+                            || matches!(
+                                self.c.types.get(inner),
+                                Type::Sum(s) if self.c.types.sum(*s).is_nullary()
+                            )
+                    }
                     _ => false,
                 }
         }) {

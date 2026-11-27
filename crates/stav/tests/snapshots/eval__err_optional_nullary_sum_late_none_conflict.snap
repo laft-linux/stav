@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0501]: conflicting values for `o`
+  --> app/main.stav:7:5
+  label: app/main.stav:7:5: none (plain)
+  label: app/main.stav:8:5: fast (plain)
+  help: keep one of them, or mark the one that should win with `force(...)`
