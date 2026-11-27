@@ -1,0 +1,6 @@
+type Level = info | warn
+struct S { level: Level }
+struct Root { x: Int = 0, s: S }
+fn mk(x: Int) -> S = S { level = info }
+s = mk(self.x)
+s { level warn {} }

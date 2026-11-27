@@ -1,0 +1,11 @@
+---
+source: crates/stav/tests/eval.rs
+assertion_line: 225
+expression: output
+---
+--- errors
+error[E0504]: a late whole value for `s` has other contributions at equal or lower priority
+  --> app/main.stav:5:5
+  label: app/main.stav:5:5: a value that reads `self` (plain)
+  label: app/main.stav:6:5: warn (plain)
+  help: remove the other contributions, raise their priority, or compute the whole value without `self`

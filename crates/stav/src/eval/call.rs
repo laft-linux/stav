@@ -10,7 +10,7 @@ use super::{Eval, R};
 use crate::ast;
 use crate::check::decls::GlobalKind;
 use crate::check::model::{CallFact, Callee, Fact, Meaning};
-use crate::check::types::{GlobalId, ParamDef, StructId, SumId, Type, TypeId};
+use crate::check::types::{GlobalId, ParamDef, StructId, Type, TypeId};
 use crate::diagnostic::{Diagnostic, Label};
 use crate::span::SourceSpan;
 use crate::syntax::NodeKind;
@@ -55,7 +55,7 @@ impl<'c> Eval<'c> {
                     }
                 };
                 let file = self.c.globals[g.index()].file;
-                let (args, _) = self.arguments(cx, params, &fact.args, file, at, None)?;
+                let (args, _) = self.arguments(cx, (file, params), &fact.args, at, None, false)?;
                 self.call_global(g, args, at)
             }
             Callee::Variant { sum, variant } => {
@@ -64,7 +64,7 @@ impl<'c> Eval<'c> {
                     return self.new_variant(sum, variant, None, at);
                 };
                 let file = self.c.types.sum(sum).file;
-                let payload = self.arguments(cx, params, &fact.args, file, at, parts)?;
+                let payload = self.arguments(cx, (file, params), &fact.args, at, parts, true)?;
                 self.new_variant_set(sum, variant, Some(payload), at)
             }
             Callee::Builtin(b) => self.builtin(cx, b, &fact.args, at),
@@ -103,11 +103,11 @@ impl<'c> Eval<'c> {
     fn arguments(
         &mut self,
         cx: &Cx<'_>,
-        params: &'c [ParamDef],
+        (declared_in, params): (crate::check::FileId, &'c [ParamDef]),
         args: &[Option<usize>],
-        declared_in: crate::check::FileId,
         at: SourceSpan,
         mut parts: Option<&mut Vec<(String, Written)>>,
+        cache_defaults: bool,
     ) -> R<(Vec<Val>, Vec<bool>)> {
         let mut values = Vec::with_capacity(params.len());
         let mut given = Vec::with_capacity(params.len());
@@ -143,7 +143,14 @@ impl<'c> Eval<'c> {
                             env: Env::default(),
                             frames: &[],
                         };
-                        (self.expr(&inner, e)?, at)
+                        (
+                            if cache_defaults {
+                                self.default_fragment(unit, node)?.0
+                            } else {
+                                self.expr(&inner, e)?
+                            },
+                            at,
+                        )
                     }
                     None => (Val::None, at),
                 },
@@ -410,9 +417,6 @@ impl<'c> Eval<'c> {
     /// Returns the complete value of a field default that does not read
     /// `self`, evaluated once.
     pub(crate) fn complete_default(&mut self, id: StructId, field: usize) -> R<Val> {
-        if let Some(v) = self.caches.complete.get(&(id, field)) {
-            return Ok(v.clone());
-        }
         let def = self.c.types.structure(id);
         let file = def.file;
         let span = def.span;
@@ -422,55 +426,6 @@ impl<'c> Eval<'c> {
         ) else {
             return Err(self.bug(file, span, "a default is missing"));
         };
-        let e = self.expr_at(unit, node)?;
-        let cx = Cx {
-            unit,
-            file,
-            env: Env::default(),
-            frames: &[],
-        };
-        let value = self.expr(&cx, e)?;
-        self.caches.complete.insert((id, field), value.clone());
-        Ok(value)
-    }
-
-    /// Returns the value of a payload default, evaluated once.
-    pub(crate) fn payload_default(
-        &mut self,
-        sum: SumId,
-        variant: usize,
-        field: usize,
-    ) -> R<Option<Val>> {
-        if let Some(v) = self.caches.payload.get(&(sum, variant, field)) {
-            return Ok(Some(v.clone()));
-        }
-        let def = self.c.types.sum(sum);
-        let file = def.file;
-        let param = def
-            .variants
-            .get(variant)
-            .and_then(|v| v.fields.as_ref())
-            .and_then(|f| f.get(field));
-        let Some(param) = param else {
-            return Ok(None);
-        };
-        let Some(node) = param.default else {
-            return Ok(None);
-        };
-        let Some(unit) = self.file_unit(file) else {
-            return Err(self.bug(file, def.span, "a declaration has no unit"));
-        };
-        let e = self.expr_at(unit, node)?;
-        let cx = Cx {
-            unit,
-            file,
-            env: Env::default(),
-            frames: &[],
-        };
-        let value = self.expr(&cx, e)?;
-        self.caches
-            .payload
-            .insert((sum, variant, field), value.clone());
-        Ok(Some(value))
+        self.default_fragment(unit, node).map(|(value, _)| value)
     }
 }

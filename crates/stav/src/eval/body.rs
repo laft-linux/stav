@@ -69,7 +69,7 @@ impl From<Priority> for Prio {
 #[derive(Debug, Clone)]
 pub(crate) enum Kind {
     Value(Val),
-    /// A value that reads `self`, evaluated after merging.
+    /// An expression suspended until it participates in the merge.
     Deferred(Rc<Deferred>),
     /// The attribute is present: a block, or a struct or map value, sets
     /// it, even when it sets nothing inside it.
@@ -81,9 +81,20 @@ pub(crate) enum Kind {
     Spent,
 }
 
-/// A right side that reads `self`.
+/// The work a suspended contribution performs when it participates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeferredForm {
+    /// Evaluates a value, retaining explicit fields unless it reads `self`.
+    Value,
+    /// Resolves computed map keys and contributes recursively suspended children.
+    MapLiteral,
+}
+
+/// A suspended right side, including read-free declared defaults.
 #[derive(Debug)]
 pub(crate) struct Deferred {
+    /// Whether evaluation builds a value or resolves a map literal's keys.
+    pub(crate) form: DeferredForm,
     pub(crate) unit: UnitId,
     /// The node index of the expression.
     pub(crate) node: usize,
@@ -94,6 +105,13 @@ pub(crate) struct Deferred {
     /// The type of the attribute.
     pub(crate) ty: TypeId,
     pub(crate) reads: Vec<SelfRead>,
+}
+
+impl Deferred {
+    /// Whether this contribution evaluates a genuine late whole value.
+    pub(crate) fn is_late(&self) -> bool {
+        self.form == DeferredForm::Value && !self.reads.is_empty()
+    }
 }
 
 /// One contribution to an attribute.
@@ -114,6 +132,8 @@ pub(crate) struct Contrib {
     pub(crate) parts: Option<Rc<Parts>>,
     /// Whether every field of the value was supplied by a late whole.
     pub(crate) complete: bool,
+    /// The instance declaring a default, preserved through literal splitting.
+    pub(crate) default_owner: Option<Rc<[Seg]>>,
 }
 
 /// One part of a value that a literal wrote.
@@ -137,6 +157,9 @@ pub(crate) enum Parts {
     /// A variant call: the call itself, with its arguments as entries.
     Payload(Written),
 }
+
+/// A computed default fragment and the literal parts that wrote its value.
+pub(crate) type DefaultFragment = (Val, Option<Rc<Parts>>);
 
 impl Contrib {
     pub(crate) fn with(&self, kind: Kind) -> Self {
@@ -291,6 +314,7 @@ impl Body {
             seq: 0,
             parts: None,
             complete: false,
+            default_owner: None,
         }
     }
 }
@@ -484,7 +508,8 @@ impl<'c> Eval<'c> {
     /// contribution per field or key it sets, a struct or map value one
     /// per field or key it has, and any other value as a whole. The
     /// contributions copy `template` with their own kinds. Literal children
-    /// are collected recursively, deferring only those that read `self`.
+    /// are split recursively. Declared defaults suspend every expression,
+    /// while statement values suspend only expressions that read `self`.
     pub(crate) fn contribute(
         &mut self,
         body: &Body,
@@ -541,38 +566,42 @@ impl<'c> Eval<'c> {
                 }
                 Ok(())
             }
-            (Expr::Map(map), Type::Map(_, value_ty))
-                if !body.defer_values
-                    || map.entries().all(|entry| {
-                        entry.key().is_some_and(|key| match key {
-                            Key::Name(_) => true,
-                            Key::Str(string) => string.value().is_some(),
-                        })
-                    }) =>
-            {
-                let mut keys = BTreeSet::new();
-                out.push(Pending {
-                    path: path.clone(),
-                    contrib: template.with(Kind::Present),
-                });
-                for entry in map.entries() {
-                    let (Some(key), Some(value)) = (entry.key(), entry.value()) else {
-                        continue;
-                    };
-                    let name = self.key_text(cx, key)?;
-                    if !keys.insert(name.clone()) {
-                        return Err(self.fail(
-                            cx.at(key.span()),
-                            "E0605",
-                            format!("the key `{name}` is given more than once"),
-                        ));
+            (Expr::Map(map), Type::Map(_, _)) => {
+                let mut reads = Vec::new();
+                let mut computed_keys = false;
+                if body.defer_values {
+                    for entry in map.entries() {
+                        if !matches!(entry.key(), Some(Key::Str(string)) if string.value().is_none())
+                        {
+                            continue;
+                        }
+                        computed_keys = true;
+                        let Some(value) = entry.value() else { continue };
+                        let Fact::Expr(fact) = self.fact(body.unit, value.syntax().index()) else {
+                            return Err(self.bug(
+                                body.file,
+                                value.syntax().span(),
+                                "an expression has no facts",
+                            ));
+                        };
+                        reads.extend(fact.reads.iter().cloned());
                     }
-                    let mut sub = path.clone();
-                    sub.push(Seg::Key(name.into()));
-                    let template = template.spanning(entry.syntax().span());
-                    self.contribute(body, sub, value_ty, value, &template, out)?;
                 }
-                Ok(())
+                if computed_keys {
+                    out.push(Pending {
+                        path: path.clone(),
+                        contrib: template.with(Kind::Deferred(Rc::new(Deferred {
+                            form: DeferredForm::MapLiteral,
+                            unit: body.unit,
+                            node: e.syntax().index(),
+                            env: body.env.clone(),
+                            frames: body.frames.iter().map(|f| f.as_slice().into()).collect(),
+                            ty,
+                            reads,
+                        }))),
+                    });
+                }
+                self.contribute_map(body, path, map, template, out, !body.defer_values)
             }
             _ => {
                 let reads = match self.fact(body.unit, e.syntax().index()) {
@@ -596,6 +625,7 @@ impl<'c> Eval<'c> {
                 }
                 if body.defer_values || !reads.is_empty() {
                     let deferred = Deferred {
+                        form: DeferredForm::Value,
                         unit: body.unit,
                         node: e.syntax().index(),
                         env: body.env.clone(),
@@ -618,6 +648,81 @@ impl<'c> Eval<'c> {
                 Ok(())
             }
         }
+    }
+
+    /// Exposes literal keys statically and resolves computed keys only at runtime.
+    /// Runtime resolution checks all keys but contributes only the computed entries
+    /// when literal entries have already been split from a declared default.
+    fn contribute_map(
+        &mut self,
+        body: &Body,
+        path: Vec<Seg>,
+        map: ast::Map<'c>,
+        template: &Contrib,
+        out: &mut Vec<Pending>,
+        resolve_computed: bool,
+    ) -> R<()> {
+        let cx = body.cx();
+        let Fact::Expr(fact) = self.fact(body.unit, map.syntax().index()) else {
+            return Err(self.bug(body.file, map.syntax().span(), "a map literal has no facts"));
+        };
+        let types = &self.c.types;
+        let inner = types
+            .unwrap_option(fact.ty)
+            .unwrap_or_else(|| types.peel(fact.ty));
+        let Type::Map(_, value_ty) = types.get(inner) else {
+            return Err(self.bug(
+                body.file,
+                map.syntax().span(),
+                "a map literal has a non-map type",
+            ));
+        };
+        let value_ty = *value_ty;
+        let mut keys = BTreeSet::new();
+        out.push(Pending {
+            path: path.clone(),
+            contrib: template.with(Kind::Present),
+        });
+        for entry in map.entries() {
+            let (Some(key), Some(value)) = (entry.key(), entry.value()) else {
+                continue;
+            };
+            let computed = matches!(key, Key::Str(string) if string.value().is_none());
+            if computed && !resolve_computed {
+                continue;
+            }
+            let name = if body.defer_values
+                && let Key::Str(string) = key
+            {
+                let cache_key = (body.unit, string.syntax().index());
+                if let Some((Val::Str(text), _)) = self.caches.defaults.get(&cache_key) {
+                    text.to_string()
+                } else {
+                    let text = self.key_text(&cx, key)?;
+                    self.caches
+                        .defaults
+                        .insert(cache_key, (Val::Str(text.as_str().into()), None));
+                    text
+                }
+            } else {
+                self.key_text(&cx, key)?
+            };
+            if !keys.insert(name.clone()) {
+                return Err(self.fail(
+                    cx.at(key.span()),
+                    "E0605",
+                    format!("the key `{name}` is given more than once"),
+                ));
+            }
+            if body.defer_values && resolve_computed && !computed {
+                continue;
+            }
+            let mut sub = path.clone();
+            sub.push(Seg::Key(name.into()));
+            let template = template.spanning(entry.syntax().span());
+            self.contribute(body, sub, value_ty, value, &template, out)?;
+        }
+        Ok(())
     }
 
     /// Contributes a value at `path`: a struct or map one contribution per
@@ -877,6 +982,7 @@ impl<'c> Eval<'c> {
                 })
                 .collect();
             contrib.kind = Kind::Deferred(Rc::new(Deferred {
+                form: d.form,
                 unit: d.unit,
                 node: d.node,
                 env: d.env.clone(),
@@ -944,6 +1050,23 @@ impl<'c> Eval<'c> {
         })))
     }
 
+    /// Evaluates a read-free default fragment once, retaining its written parts.
+    pub(crate) fn default_fragment(&mut self, unit: UnitId, node: usize) -> R<DefaultFragment> {
+        if let Some(found) = self.caches.defaults.get(&(unit, node)) {
+            return Ok(found.clone());
+        }
+        let e = self.expr_at(unit, node)?;
+        let cx = Cx {
+            unit,
+            file: self.unit_file(unit),
+            env: Env::default(),
+            frames: &[],
+        };
+        let result = self.written(&cx, e)?;
+        self.caches.defaults.insert((unit, node), result.clone());
+        Ok(result)
+    }
+
     /// Evaluates a deferred contribution with the blocks it reads, and
     /// returns its contributions relative to its attribute.
     pub(crate) fn evaluate_deferred(
@@ -954,6 +1077,27 @@ impl<'c> Eval<'c> {
     ) -> R<Vec<Pending>> {
         let file = self.unit_file(deferred.unit);
         let e = self.expr_at(deferred.unit, deferred.node)?;
+        if deferred.form == DeferredForm::MapLiteral {
+            let Expr::Map(map) = e else {
+                return Err(self.bug(
+                    file,
+                    template.span,
+                    "a suspended map literal has a non-map shape",
+                ));
+            };
+            let body = Body {
+                unit: deferred.unit,
+                file,
+                base: Vec::new(),
+                frames: deferred.frames.iter().map(|path| path.to_vec()).collect(),
+                env: deferred.env.clone(),
+                via: template.via.clone(),
+                defer_values: true,
+            };
+            let mut out = Vec::new();
+            self.contribute_map(&body, Vec::new(), map, template, &mut out, true)?;
+            return Ok(out);
+        }
         let cx = Cx {
             unit: deferred.unit,
             file,
@@ -961,10 +1105,14 @@ impl<'c> Eval<'c> {
             frames,
         };
         let mut out = Vec::new();
-        let (value, parts) = self.written(&cx, e)?;
+        let (value, parts) = if template.prio == Prio::Declared && deferred.reads.is_empty() {
+            self.default_fragment(deferred.unit, deferred.node)?
+        } else {
+            self.written(&cx, e)?
+        };
         let template = Contrib {
             parts,
-            complete: !deferred.reads.is_empty(),
+            complete: deferred.is_late(),
             ..template.clone()
         };
         self.decompose(Vec::new(), deferred.ty, value, &template, &mut out);

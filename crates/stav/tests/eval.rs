@@ -1836,7 +1836,7 @@ fn enclosing_pending_wholes_ignore_declared_default_competitors() {
 }
 
 #[test]
-fn unused_defaults_stay_eager_only_outside_late_wholes() {
+fn unused_defaults_never_execute() {
     for default in ["{}", "make(self.n)"] {
         let text = format!(
             "fn bad() -> Int = 1 / 0\n\
@@ -1844,12 +1844,7 @@ fn unused_defaults_stay_eager_only_outside_late_wholes() {
             struct Root {{ n: Int = 1, cfg: Item = {default} }}\n\
             fn make(n: Int) -> Item = Item {{ a = n }}\ncfg.a = 7\n"
         );
-        if default == "{}" {
-            let error = canonical(&text).unwrap_err();
-            assert!(error.contains("E0603"), "{error}");
-        } else {
-            assert_eq!(canonical(&text).unwrap(), r#"{"cfg":{"a":7},"n":1}"#);
-        }
+        assert_eq!(canonical(&text).unwrap(), r#"{"cfg":{"a":7},"n":1}"#);
     }
 }
 
