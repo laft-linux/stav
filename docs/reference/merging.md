@@ -21,7 +21,9 @@ Every statement form produces contributions:
 | `if c { ... } else { ... }` | the statements of the branch that `c` selects |
 | `for x in e { ... }` | the statements of the body, once per element of `e` |
 
-Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. The set of contributions therefore never depends on a merged value. [Expressions and statements](/reference/expressions) describes each statement in full.
+Conditions, `for` collections, block labels and `include` expressions are evaluated at once and cannot read `self`. Map-literal keys cannot read `self` either, including through interpolation, function arguments or late bindings. Map-literal values may read it. These restrictions keep contribution paths independent of merged values. [Expressions and statements](/reference/expressions) describes each statement in full.
+
+A late right-hand side that is not a literal contributes one whole value. At a map, struct or `Data` path, including an `Option` of these types, no other contribution at or below that path may have equal or higher priority. Violations report [E0504](/reference/error-codes#e0504) and cite both contributions. Lower priority competitors are allowed. The whole struct value's own generated field defaults do not count as other contributions. Literals are exempt from this whole-value restriction.
 
 ## Priorities
 

@@ -383,6 +383,12 @@ impl<'c> Eval<'c> {
         let types = &self.c.types;
         let option = types.unwrap_option(ty).is_some();
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
+        let errors = self.errors.len();
+        let whole_pending = self.check_late_wholes(n, inner)?;
+        if self.errors.len() != errors {
+            self.merge.node_mut(n).shape = Shape::Conflict;
+            return Ok(());
+        }
         if option {
             match self.presence(n) {
                 Presence::Absent => {
@@ -413,7 +419,9 @@ impl<'c> Eval<'c> {
                 }
                 self.merge.node_mut(n).pending = deferred;
                 self.merge.node_mut(n).shape = Shape::Struct(s);
-                self.add_defaults(n, s)?;
+                if !whole_pending {
+                    self.add_defaults(n, s)?;
+                }
                 let fields: Vec<TypeId> = self
                     .c
                     .types
@@ -475,6 +483,59 @@ impl<'c> Eval<'c> {
             }
         }
         Ok(())
+    }
+
+    /// Checks whole late values before optional presence or generated
+    /// child defaults can conceal or introduce competing contributions.
+    fn check_late_wholes(&mut self, n: NodeId, ty: TypeId) -> R<bool> {
+        if !matches!(
+            self.c.types.get(ty),
+            Type::Struct(_) | Type::Map(_, _) | Type::Data
+        ) {
+            return Ok(false);
+        }
+        let at = self.merge.node(n).contribs.clone();
+        let mut whole_pending = false;
+        for id in &at {
+            let contrib = self.merge.contrib(*id);
+            let Kind::Deferred(deferred) = &contrib.kind else {
+                continue;
+            };
+            let mut expr = self.expr_at(deferred.unit, deferred.node)?;
+            while let crate::ast::Expr::Paren(paren) = expr {
+                let Some(inner) = paren.expr() else { break };
+                expr = inner;
+            }
+            if matches!(
+                expr,
+                crate::ast::Expr::Map(_)
+                    | crate::ast::Expr::StructLit(_)
+                    | crate::ast::Expr::List(_)
+                    | crate::ast::Expr::Str(_)
+            ) {
+                continue;
+            }
+            whole_pending = true;
+            let priority = contrib.prio;
+            let mut competitors: Vec<u32> = at
+                .iter()
+                .copied()
+                .chain(self.merge.below(n))
+                .filter(|&other| {
+                    other != *id
+                        && self.merge.contrib(other).prio >= priority
+                        && !matches!(self.merge.contrib(other).kind, Kind::Spent)
+                })
+                .collect();
+            if !competitors.is_empty() {
+                competitors.sort_by_key(|&other| self.merge.contrib(other).seq);
+                let mut ids = vec![*id];
+                ids.extend(competitors);
+                self.conflict(n, &ids, "E0504");
+                break;
+            }
+        }
+        Ok(whole_pending)
     }
 
     fn has_selection(&self, n: NodeId) -> bool {
@@ -1166,6 +1227,12 @@ impl<'c> Eval<'c> {
             "E0502" => (
                 format!("tagged blocks select different variants of `{path}`"),
                 "keep the blocks of one variant, or select the variant with `force(...)`",
+            ),
+            "E0504" => (
+                format!(
+                    "a late whole value for `{path}` has other contributions at equal or higher priority"
+                ),
+                "remove the other contributions, lower their priority, or compute the whole value without `self`",
             ),
             "E0503" => (
                 format!("`Data` values of different shapes for `{path}`"),

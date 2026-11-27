@@ -1,0 +1,7 @@
+struct Root { key: Str = "a", m: Map<Str, Int> = {} }
+fn identity(k: Str) -> Str = k
+let late = let k = self.key in k
+m = { "#{self.key}" = 1 }
+m = { "prefix-#{identity(self.key)}" = 1 }
+m = { "#{late}" = 1 }
+m = let k = self.key in { "#{k}" = 1 }

@@ -150,10 +150,14 @@ release = "testing"
 `self` may appear in the right-hand side of an attribute, in a `let` statement inside a body, and in a field default. It may not appear where Stav needs a value before merging starts:
 
 - the condition of an `if` statement and the collection of a `for` statement,
-- block labels and `include` expressions,
+- block labels, map-literal keys and `include` expressions,
 - the body of a function or a lambda.
 
-These decide which contributions exist, or they would let a function depend on where it is called. Using `self` there is an error:
+These decide which contributions exist, or they would let a function depend on where it is called. The restriction also applies through interpolations, function arguments and bindings that read `self`. Map-literal values may still read it.
+
+A late expression that returns a whole map, struct or `Data` value, rather than a literal, has an additional restriction. No other contribution at or below its path may have equal or higher priority, even through an `Option`. Lower priority contributions and its own generated field defaults are allowed. [E0504](/reference/error-codes#e0504) explains the diagnostic.
+
+Using `self` in a structural position is an error:
 
 <!-- file: structural.stav -->
 

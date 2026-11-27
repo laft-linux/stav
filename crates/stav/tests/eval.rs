@@ -1066,3 +1066,204 @@ mod random {
         }
     }
 }
+
+#[test]
+fn late_whole_values_reject_equal_or_higher_priority_competitors() {
+    let cases = [
+        ("Map<Str, Int>", "{ a = n }", "m.a = 2"),
+        ("Item", "Item { a = n }", "m.a = 2"),
+        ("Data", "{ a = n }", "m = { b = 2 }"),
+        ("Option<Map<Str, Int>>", "{ a = n }", "m.a = 2"),
+        ("Option<Item>", "Item { a = n }", "m.a = 2"),
+        ("Option<Data>", "{ a = n }", "m = { b = 2 }"),
+    ];
+    for (ty, value, competitor) in cases {
+        for priority in ["plain", "force"] {
+            let competitor = if priority == "force" {
+                let (path, rhs) = competitor.split_once(" = ").unwrap();
+                format!("{path} = force({rhs})")
+            } else {
+                competitor.to_owned()
+            };
+            let text = format!(
+                "struct Item {{ a: Int = 0, b: Int = 3 }}\n\
+                 struct Root {{ n: Int = 1, m: {ty} }}\n\
+                 fn make(n: Int) -> {ty} = {value}\n\
+                 m = make(self.n)\n{competitor}\n"
+            );
+            let fixture = fixture(&text);
+            let checked = check(&fixture.host, &fixture.root).expect("the program checks");
+            let result = checked.eval(&fixture.limits);
+            let diagnostics = match result {
+                Ok(value) => panic!(
+                    "expected E0504 for {text}, got {}",
+                    value.to_canonical_json()
+                ),
+                Err(d) => d,
+            };
+            let codes: Vec<_> = diagnostics.iter().map(|d| d.diagnostic.code).collect();
+            assert_eq!(codes, ["E0504"], "{text}\n{diagnostics}");
+            let diagnostic = &diagnostics.iter().next().unwrap().diagnostic;
+            assert_eq!(
+                &text[diagnostic.span.start as usize..diagnostic.span.end as usize],
+                "make(self.n)"
+            );
+            assert!(diagnostic.labels.len() >= 2, "{diagnostics}");
+        }
+    }
+}
+
+#[test]
+fn late_whole_values_allow_lower_priority_contributions_and_defaults() {
+    for (ty, value, lower, expected) in [
+        (
+            "Map<Str, Int>",
+            "{ a = n }",
+            "m.b = default(2)",
+            r#"{"a":1,"b":2}"#,
+        ),
+        (
+            "Item",
+            "Item { a = n }",
+            "m.a = default(2)",
+            r#"{"a":1,"b":3}"#,
+        ),
+        ("Data", "{ a = n }", "m = default({ b = 2 })", r#"{"a":1}"#),
+        (
+            "Option<Map<Str, Int>>",
+            "{ a = n }",
+            "m.b = default(2)",
+            r#"{"a":1,"b":2}"#,
+        ),
+        (
+            "Option<Item>",
+            "Item { a = n }",
+            "m.a = default(2)",
+            r#"{"a":1,"b":3}"#,
+        ),
+        (
+            "Option<Data>",
+            "{ a = n }",
+            "m = default({ b = 2 })",
+            r#"{"a":1}"#,
+        ),
+    ] {
+        let text = format!(
+            "struct Item {{ a: Int = 0, b: Int = 3 }}\n\
+             struct Root {{ n: Int = 1, m: {ty} }}\n\
+             fn make(n: Int) -> {ty} = {value}\n\
+             m = make(self.n)\n{lower}\n"
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&canonical(&text).expect(&text)).unwrap();
+        assert_eq!(
+            value["m"],
+            serde_json::from_str::<serde_json::Value>(expected).unwrap()
+        );
+    }
+}
+
+#[test]
+fn optional_none_cannot_hide_an_invalid_late_whole_value() {
+    let text = "struct Root { n: Int = 1, m: Option<Map<Str, Int>> }\n\
+                fn make(n: Int) -> Map<Str, Int> = { a = n }\n\
+                m = make(self.n)\nm = force(none)\n";
+    let error = canonical(text).expect_err("the higher priority none is a competitor");
+    assert!(error.contains("E0504"), "{error}");
+}
+
+#[test]
+fn late_whole_defaults_do_not_compete_with_their_own_child_defaults() {
+    let text = "struct Item { a: Int = 0, b: Int = 3 }\n\
+                struct Root { n: Int = 1, m: Item = make(self.n) }\n\
+                fn make(n: Int) -> Item = Item { a = n }\n";
+    assert_eq!(canonical(text).unwrap(), r#"{"m":{"a":1,"b":3},"n":1}"#);
+}
+
+#[test]
+fn late_whole_defaults_reject_explicit_default_contributions() {
+    let text = "struct Item { a: Int = 0 }\n\
+                struct Root { n: Int = 1, m: Item = make(self.n) }\n\
+                fn make(n: Int) -> Item = Item { a = n }\n\
+                m = default({ a = 2 })\n";
+    let error = canonical(text).expect_err("the explicit default is a competitor");
+    assert!(error.contains("E0504"), "{error}");
+}
+
+#[test]
+fn late_whole_values_find_competitors_from_entries_and_includes() {
+    for other in ["#! entries main.stav overlay.stav\n", ""] {
+        let text = format!(
+            "{other}#- file main.stav\n\
+             struct Root {{ n: Int = 1, m: Map<Str, Int> = {{}} }}\n\
+             fn make(n: Int) -> Map<Str, Int> = {{ a = n }}\n\
+             m = make(self.n)\n{}\
+             #- file overlay.stav\nm.b = 2\n",
+            if other.is_empty() {
+                "include \"./overlay.stav\"\n"
+            } else {
+                ""
+            }
+        );
+        let error = canonical(&text).expect_err("contributions across files also compete");
+        assert!(error.contains("E0504"), "{error}");
+        assert!(error.contains("app/main.stav:3:"), "{error}");
+        assert!(error.contains("app/overlay.stav:1:"), "{error}");
+        if other.is_empty() {
+            assert!(error.contains("included from"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn map_values_and_field_default_expression_lets_keep_their_self_reads() {
+    let text = "struct Root { key: Str = \"a\", n: Int = 1, m: Map<Str, Str> = {}, doubled: Int = let x = self.n in x + x }\n\
+                n = force(4)\n\
+                m = { fixed = self.key, \"constant\" = self.key }\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"doubled":8,"key":"a","m":{"constant":"a","fixed":"a"},"n":4}"#
+    );
+}
+
+#[test]
+fn late_map_and_struct_literals_remain_allowed_with_competitors() {
+    let text = "struct Item { a: Int = 0, b: Int = 3 }\n\
+                struct Root { n: Int = 1, m: Map<Str, Int> = {}, item: Item = {}, data: Data = none }\n\
+                m = ({ a = self.n })\nm.b = 2\n\
+                item = (Item { a = self.n })\nitem.b = 2\n\
+                data = ({ a = self.n })\ndata = { b = 2 }\n";
+    assert_eq!(
+        canonical(text).unwrap(),
+        r#"{"data":{"a":1,"b":2},"item":{"a":1,"b":2},"m":{"a":1,"b":2},"n":1}"#
+    );
+}
+
+#[test]
+fn late_whole_values_check_other_contributions_at_the_whole_path() {
+    for rhs in [
+        "make(self.n)",
+        "(make(self.n))",
+        "let x = self.n in make(x)",
+        "if self.n == 1 { make(1) } else { make(2) }",
+    ] {
+        let text = format!(
+            "struct Root {{ n: Int = 1, m: Map<Str, Int> = {{}} }}\n\
+             fn make(n: Int) -> Map<Str, Int> = {{ a = n }}\n\
+             m = {rhs}\nm = {{ b = 2 }}\n"
+        );
+        let error = canonical(&text).expect_err("the whole path has another contribution");
+        assert!(error.contains("E0504"), "{error}");
+    }
+}
+
+#[test]
+fn late_data_list_and_string_literals_keep_their_static_shape() {
+    for (rhs, other, expected) in [
+        ("[self.n]", "[2]", r#"{"d":[1,2],"n":1}"#),
+        ("\"#{self.n}\"", "\"1\"", r#"{"d":"1","n":1}"#),
+    ] {
+        let text = format!("struct Root {{ n: Int = 1, d: Data }}\nd = {rhs}\nd = {other}\n");
+        assert_eq!(canonical(&text).expect(&text), expected);
+    }
+}

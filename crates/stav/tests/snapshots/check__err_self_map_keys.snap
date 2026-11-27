@@ -1,0 +1,16 @@
+---
+source: crates/stav/tests/check.rs
+assertion_line: 171
+expression: output
+---
+--- errors
+error[E0606]: `self` cannot be used in a map literal key
+  --> app/main.stav:4:10
+  help: pass the value as a parameter instead
+error[E0606]: `self` cannot be used in a map literal key
+  --> app/main.stav:5:26
+  help: pass the value as a parameter instead
+error[E0606]: `late` reads `self`, which cannot be used in a map literal key
+  --> app/main.stav:6:10
+error[E0606]: `k` reads `self`, which cannot be used in a map literal key
+  --> app/main.stav:7:30

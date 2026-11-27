@@ -638,6 +638,7 @@ impl<'p> Checker<'p> {
         }
         match &cx.self_mode {
             SelfMode::Body(body) if Some(body.top) == top => cx.reads.extend_from_slice(reads),
+            SelfMode::Default(_) if top.is_none() => cx.reads.extend_from_slice(reads),
             SelfMode::Forbidden(place) => {
                 let place = *place;
                 self.error(
@@ -1010,7 +1011,12 @@ impl<'p> Checker<'p> {
             let text = match k {
                 Key::Name(token) => Some(token.text().to_owned()),
                 Key::Str(string) => {
+                    let saved = std::mem::replace(
+                        &mut cx.self_mode,
+                        SelfMode::Forbidden("a map literal key"),
+                    );
                     self.interpolations(cx, string);
+                    cx.self_mode = saved;
                     string.value()
                 }
             };
@@ -1776,6 +1782,7 @@ impl<'p> Checker<'p> {
             }
         }
         for binding in &bindings {
+            let reads_start = cx.reads.len();
             let annotation = binding.ty().map(|t| self.resolve_local_type(cx, t));
             let ty = match (binding.value(), annotation) {
                 (Some(v), Some(a)) => {
@@ -1786,7 +1793,8 @@ impl<'p> Checker<'p> {
                 (None, a) => a.unwrap_or(TypeId::ERROR),
             };
             let Some(name) = binding.name() else { continue };
-            let id = self.local(cx, name.text(), ty, Vec::new());
+            let reads = cx.reads[reads_start..].to_vec();
+            let id = self.local(cx, name.text(), ty, reads);
             cx.scope.push((name.text().to_owned(), Binding::Local(id)));
             self.fact(cx, binding.syntax(), Fact::Let(LetFact::Local(id)));
         }

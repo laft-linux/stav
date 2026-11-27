@@ -82,6 +82,7 @@ The first digits of a code name the area it belongs to.
 | [E0501](#e0501) | conflicting values at equal priority |
 | [E0502](#e0502) | tagged blocks that select different variants |
 | [E0503](#e0503) | `Data` values of different shapes at equal priority |
+| [E0504](#e0504) | a late whole value with other contributions at equal or higher priority |
 | [E0600](#e0600) | an internal error |
 | [E0601](#e0601) | integer overflow |
 | [E0602](#e0602) | a float that is not finite |
@@ -1662,6 +1663,39 @@ error[E0503]: `Data` values of different shapes for `settings`
 
 Give one of them a higher priority. A `force(...)` or `default(...)` resolves every conflict of this kind.
 
+### E0504
+
+A right-hand side that reads `self` and is not a literal contributes one whole value. At a map, struct or `Data` path, including an `Option` of one of these types, it cannot have another contribution at or below that path with equal or higher priority. This restriction keeps the paths that participate in merging independent of merged values. The diagnostic cites the late whole value and its competitors, including contributions from other entry files and included parts.
+
+<!-- file: e0504.stav -->
+
+```stav
+struct Root { version: Int = 1, settings: Map<Str, Int> = {} }
+
+fn settings_for(version: Int) -> Map<Str, Int> = { version = version }
+
+settings       = settings_for(self.version)
+settings.extra = 2
+```
+
+<!-- run: eval e0504.stav -->
+
+```text
+error[E0504]: a late whole value for `settings` has other contributions at equal or higher priority
+  ┌─ e0504.stav:5:18
+  │
+5 │ settings       = settings_for(self.version)
+  │                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  │                  │
+  │                  a value that reads `self` (plain)
+6 │ settings.extra = 2
+  │                  - 2 (plain)
+  │
+  = help: remove the other contributions, lower their priority, or compute the whole value without `self`
+```
+
+Remove the competing contributions, give them a lower priority, or compute the whole value without `self`. Lower priority contributions are allowed. The defaults generated for the whole struct value's own fields are not competitors. Literals are exempt from this whole-value restriction, but their map keys still cannot read `self`, as explained under [E0606](#e0606).
+
 ## Evaluation
 
 These are reported while the program is evaluated, or while `self` is resolved after merging. Evaluation stops at the first of them. The checks for `self` cycles and recursion run before evaluation.
@@ -1798,7 +1832,7 @@ Make the keys unique, for example with `unique(names)`.
 
 ### E0606
 
-`self` is read where it cannot be used. `self` is resolved after merging, so it cannot decide which contributions exist. It is not allowed in the condition of `if`, the collection of `for`, block labels, `include` expressions, function bodies and lambdas. A binding that reads `self` cannot be used there either, and cannot be used from the body of another block.
+`self` is read where it cannot be used. `self` is resolved after merging, so it cannot decide which contributions exist. It is not allowed in the condition of `if`, the collection of `for`, block labels, map-literal keys, `include` expressions, function bodies and lambdas. This includes a read inside a key's interpolation, a function argument, or an expression-local `let`. A binding that reads `self` cannot be used there either, and cannot be used from the body of another block. Map-literal values may read `self`.
 
 <!-- file: e0606.stav -->
 

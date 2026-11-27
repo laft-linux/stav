@@ -691,3 +691,33 @@ mod random {
         }
     }
 }
+
+#[test]
+fn map_literal_keys_cannot_read_self_through_expressions_or_bindings() {
+    let keys = [
+        "self.key",
+        "\"prefix-#{self.key}\"",
+        "identity(self.key)",
+        "late",
+        "alias",
+        "(let k = self.key in k)",
+    ];
+    for key in keys {
+        let text = format!(
+            "struct Root {{ key: Str = \"a\", m: Map<Str, Int> = {{}} }}\n\
+             fn identity(k: Str) -> Str = k\n\
+             let late = self.key\n\
+             let alias = let k = self.key in k\n\
+             m = {{ \"#{{{key}}}\" = 1 }}\n"
+        );
+        let fixture = fixture(&text);
+        assert_eq!(codes(&fixture.host, &fixture.root), ["E0606"], "{text}");
+    }
+}
+
+#[test]
+fn map_literal_key_restriction_preserves_self_reads_in_values() {
+    let text = "struct Root { key: Str = \"a\", m: Map<Str, Str> = {} }\n\
+                m = { fixed = self.key, \"constant\" = self.key }\n";
+    assert!(!run(text).starts_with("--- errors"));
+}

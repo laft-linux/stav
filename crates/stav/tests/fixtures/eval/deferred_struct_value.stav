@@ -5,6 +5,6 @@ fn hosted(repo: Str, version: Str) -> Source =
   Source { url = "https://code.example.org/#{repo}/archive/v#{version}.tar.gz" }
 tool query {
   version = "1.7"
-  source = hosted("tools/query", self.version)
+  source = force(hosted("tools/query", self.version))
   source.sha256 = "abc"
 }
