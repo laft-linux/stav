@@ -2113,14 +2113,23 @@ impl<'c> Eval<'c> {
     /// Returns participating computed-key literals at one graph node.
     fn computed_literals(&self, n: NodeId) -> Vec<u32> {
         let node = self.merge.node(n);
-        node.pending.iter().chain(&node.winners).chain(&node.checks)
+        let literal = |id| match &self.merge.contrib(id).kind {
+            Kind::Deferred(deferred) => deferred.form == DeferredForm::MapLiteral,
+            _ => false,
+        };
+        node.pending
+            .iter()
+            .chain(&node.winners)
+            .chain(&node.checks)
             .copied()
             .filter(|&id| {
-                matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if d.form == DeferredForm::MapLiteral)
+                literal(id)
                     && !self.declared_replaced(n, id)
                     && !self.covered_path(n, n, self.merge.contrib(id).prio)
                     && (!node.checks.contains(&id)
-                        || node.parent.is_some_and(|owner| self.potential_fallback(owner)))
+                        || node
+                            .parent
+                            .is_some_and(|owner| self.potential_fallback(owner)))
             })
             .collect()
     }
