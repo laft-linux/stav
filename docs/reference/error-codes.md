@@ -82,6 +82,7 @@ The first digits of a code name the area it belongs to.
 | [E0443](#e0443) | a block name shared by fields |
 | [E0444](#e0444) | wrong arguments in a call or a type |
 | [E0447](#e0447) | a `block` clause on a field of the wrong type |
+| [E0448](#e0448) | a `match` binding that looks like a misspelled variant |
 | [E0501](#e0501) | conflicting values at equal priority |
 | [E0502](#e0502) | tagged blocks that select different variants |
 | [E0503](#e0503) | `Data` values of different shapes at equal priority |
@@ -1705,6 +1706,36 @@ error[E0447]: a `block` clause needs a map of structs, a sum or an optional sum,
 ```
 
 Give the field a type such as `Map<Str, Counter>`, or remove the clause.
+
+### E0448
+
+A name in a `match` pattern is not a variant of the inspected sum type, but it is close to one, so it is most likely a misspelled variant. As a binding it would match every value, and the arms after it would never be reached. The check covers bindings written as a whole pattern or after `field =`, at any depth, for a sum type and for an `Option` of one. A name is close to a variant when a "did you mean" suggestion would offer the variant for it.
+
+<!-- file: e0448.stav -->
+
+```stav
+type Level = debug | info | warn
+
+struct Root { verbose: Bool = loud(info) }
+
+fn loud(l: Level) -> Bool = match l {
+  debgu => true
+}
+```
+
+<!-- run: check e0448.stav -->
+
+```text
+error[E0448]: `debgu` binds every value
+  ┌─ e0448.stav:6:3
+  │
+6 │   debgu => true
+  │   ^^^^^
+  │
+  = help: did you mean the variant `debug`? Write `_debgu` for a binder that matches every value
+```
+
+Write the variant you meant. If the name is meant to bind every value, start it with `_`, as in `_debgu`.
 
 ## Merging
 

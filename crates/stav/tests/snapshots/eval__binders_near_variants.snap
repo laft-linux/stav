@@ -1,0 +1,11 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "underscored": "matches every value",
+  "distant": "binds a level",
+  "shorthand": "dinit",
+  "transposed": "binds every mode"
+}

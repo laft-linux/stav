@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::decls::{TypeItem, ValueItem};
 use super::model::{Fact, LocalId, Meaning, PatternFact};
-use super::suggest::did_you_mean;
+use super::suggest::{closest, did_you_mean};
 use super::types::{SumId, Type, TypeId};
 use super::{Binding, Checker, Cx};
 use crate::ast::{self, Expr, LiteralKind, UnaryOp};
@@ -250,6 +250,7 @@ impl<'p> Checker<'p> {
                             .map(|(i, v)| (s, i, v.fields.is_some()))
                     });
                     let Some((s, index, payload)) = found else {
+                        self.binder_near_variant(cx, *token, inner);
                         arm.binds.push(Bind {
                             name: token.text().to_owned(),
                             ty: inner,
@@ -352,6 +353,33 @@ impl<'p> Checker<'p> {
                 Pat::Or(alternatives)
             }
         }
+    }
+
+    /// Reports a binder that is close to a variant of the sum it matches,
+    /// because it would match every value where the variant was meant. A
+    /// binder that starts with `_` is never reported.
+    fn binder_near_variant(&mut self, cx: &Cx, token: SyntaxToken<'_>, ty: TypeId) {
+        let name = token.text();
+        if name.starts_with('_') {
+            return;
+        }
+        let Some(s) = self.types.as_sum(ty) else {
+            return;
+        };
+        let sum = self.types.sum(s);
+        let Some(variant) = closest(name, sum.variants.iter().map(|v| v.name.as_str()))
+            .first()
+            .map(|v| (*v).to_owned())
+        else {
+            return;
+        };
+        self.error(
+            cx.file,
+            Diagnostic::error("E0448", token.span(), format!("`{name}` binds every value"))
+                .with_help(format!(
+                    "did you mean the variant `{variant}`? Write `_{name}` for a binder that matches every value"
+                )),
+        );
     }
 
     #[allow(clippy::too_many_arguments, reason = "the parts of one pattern")]

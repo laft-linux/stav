@@ -243,6 +243,7 @@ described = [
 
 - In a variant pattern, `field` binds the payload field to a name of the same name, and `field = pattern` matches the field against a nested pattern. `..` ignores the remaining fields and must come last. Without `..`, every payload field must be mentioned ([E0432](/reference/error-codes#e0432)).
 - An identifier is a variant when the inspected type has a variant of that name, and a new binding otherwise. The qualified form `Ready.immediate` is always a variant.
+- A binding that matches a value of a sum type, or of an `Option` of one, must not look like a misspelled variant of that type, because it would match every value and turn its arm into a catch-all. A name within the reach of a "did you mean" suggestion of a variant, such as `debgu` for `debug`, is [E0448](/reference/error-codes#e0448). Start the name with `_`, as in `_debgu`, for a binding that only resembles a variant. The shorthand `field` of a variant pattern is never checked, because it is the name of the field.
 - For an `Option<T>`, `none` matches absence, and every other pattern matches the value inside.
 - Both sides of `p | q` must bind the same names with the same types ([E0433](/reference/error-codes#e0433)).
 

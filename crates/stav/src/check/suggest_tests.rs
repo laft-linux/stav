@@ -62,3 +62,9 @@ fn distances_handle_multibyte_characters() {
     assert_eq!(distance("", "ab", 2), Some(2));
     assert_eq!(distance("ab", "", 1), None);
 }
+
+#[test]
+fn a_transposed_pair_is_not_edited_again() {
+    assert_eq!(distance("ndamic", "dynamic", 3), Some(3));
+    assert_eq!(did_you_mean("ndamic", ["dynamic"]), None);
+}

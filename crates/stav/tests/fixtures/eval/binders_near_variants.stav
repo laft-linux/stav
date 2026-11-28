@@ -1,0 +1,33 @@
+type L = debug | info
+
+type Init = runit | dinit
+
+type Boot = | boot(init: Init)
+
+type Mode = static | dynamic
+
+struct Root {
+  underscored: Str = underscored(info)
+  distant:     Str = distant(info)
+  shorthand:   Str = shorthand(boot(init = dinit))
+  transposed:  Str = transposed(dynamic)
+}
+
+fn underscored(l: L) -> Str = match l {
+  _debgu => "matches every value"
+}
+
+fn distant(l: L) -> Str = match l {
+  level => "binds a level"
+}
+
+fn shorthand(b: Boot) -> Str = match b {
+  boot(init) => match init {
+    runit => "runit"
+    dinit => "dinit"
+  }
+}
+
+fn transposed(m: Mode) -> Str = match m {
+  ndamic => "binds every mode"
+}

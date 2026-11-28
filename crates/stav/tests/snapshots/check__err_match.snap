@@ -23,6 +23,9 @@ error[E0434]: non-exhaustive `match` on `Option<Level>`
 error[E0432]: the variant `check` has payload fields
   --> app/main.stav:31:3
   help: write `check(..)` to ignore them
+error[E0448]: `immediat` binds every value
+  --> app/main.stav:35:3
+  help: did you mean the variant `immediate`? Write `_immediat` for a binder that matches every value
 error[E0302]: `Ready` has no variant `chek`
   --> app/main.stav:36:3
   help: did you mean `check`?

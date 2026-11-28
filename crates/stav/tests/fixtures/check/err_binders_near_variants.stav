@@ -1,0 +1,19 @@
+type L = debug | info
+
+type W = | wrap(l: L) | other
+
+struct Root { a: Str = name(info), b: Str = maybe(none), c: Str = wrapped(other) }
+
+fn name(l: L) -> Str = match l {
+  debgu => "d"
+}
+
+fn maybe(l: Option<L>) -> Str = match l {
+  none  => "n"
+  debgu => "d"
+}
+
+fn wrapped(w: W) -> Str = match w {
+  wrap(l = debgu) => "w"
+  other           => "o"
+}

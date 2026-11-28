@@ -133,7 +133,7 @@ Stav checks a program in stages, and each stage reports everything it can before
 
 ## Suggestions
 
-When a name, field, variant, block kind or label is unknown, the help suggests the closest names that would be valid in that place, as in ``did you mean `warn`?``. A suggestion is at most three names, and only names that differ from the misspelled one by a few edits are offered. When nothing is close, the diagnostic has no help.
+When a name, field, variant, block kind or label is unknown, the help suggests the closest names that would be valid in that place, as in ``did you mean `warn`?``. A suggestion is at most three names, and only names that differ from the misspelled one by a few edits are offered: at most a third of its length, and at least one. An edit inserts, deletes or replaces a character, or swaps two adjacent ones, and no part of the name is edited twice. When nothing is close, the diagnostic has no help.
 
 ## JSON output
 

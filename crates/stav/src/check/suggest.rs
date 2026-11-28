@@ -2,15 +2,33 @@
 
 /// Returns a help line suggesting the candidates closest to `name`, or
 /// `None` when none is close.
-///
-/// A candidate is close when its Damerau-Levenshtein distance to `name`,
-/// with transpositions of adjacent characters, is at most a third of the
-/// length of `name`, and at least one. At most three candidates are
-/// suggested, the closest first and in alphabetical order on ties.
 pub(crate) fn did_you_mean<'a>(
     name: &str,
     candidates: impl IntoIterator<Item = &'a str>,
 ) -> Option<String> {
+    let names: Vec<String> = closest(name, candidates)
+        .iter()
+        .map(|c| format!("`{c}`"))
+        .collect();
+    match names.as_slice() {
+        [] => None,
+        [one] => Some(format!("did you mean {one}?")),
+        [rest @ .., last] => Some(format!("did you mean {} or {last}?", rest.join(", "))),
+    }
+}
+
+/// Returns the candidates close to `name`, at most three, the closest
+/// first and in alphabetical order on ties.
+///
+/// A candidate is close when its optimal string alignment distance to
+/// `name` is at most a third of the length of `name`, and at least one.
+/// That distance counts insertions, deletions, substitutions and
+/// transpositions of adjacent characters, and edits no substring twice.
+/// Lengths and edits are counted in Unicode scalar values.
+pub(crate) fn closest<'a>(
+    name: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
     let limit = (name.chars().count() / 3).max(1);
     let mut found: Vec<(usize, &str)> = candidates
         .into_iter()
@@ -20,12 +38,7 @@ pub(crate) fn did_you_mean<'a>(
     found.sort_unstable();
     found.dedup();
     found.truncate(3);
-    let names: Vec<String> = found.iter().map(|(_, c)| format!("`{c}`")).collect();
-    match names.as_slice() {
-        [] => None,
-        [one] => Some(format!("did you mean {one}?")),
-        [rest @ .., last] => Some(format!("did you mean {} or {last}?", rest.join(", "))),
-    }
+    found.into_iter().map(|(_, c)| c).collect()
 }
 
 /// Returns the distance between `a` and `b`, or `None` when it exceeds
