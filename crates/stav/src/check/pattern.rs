@@ -53,6 +53,15 @@ enum Pat {
     Or(Vec<Pat>),
 }
 
+/// An arm of a `match`, as the exhaustiveness check sees it.
+struct ArmRow {
+    pat: Pat,
+    guarded: bool,
+    /// Whether a binder of the arm was reported as a misspelled variant.
+    refused: bool,
+    span: Span,
+}
+
 /// A name a pattern binds, with the node index of the name pattern that
 /// binds it, or `None` for a field pattern without a nested pattern.
 struct Bind {
@@ -73,6 +82,9 @@ struct PendingVariant {
 struct Arm {
     binds: Vec<Bind>,
     variants: Vec<PendingVariant>,
+    /// Whether a binder of the arm looks like a misspelled variant and was
+    /// reported, so that the arms after it are not reported as covered.
+    refused: bool,
 }
 
 impl<'p> Checker<'p> {
@@ -102,7 +114,7 @@ impl<'p> Checker<'p> {
             scrutinee = TypeId::ERROR;
         }
         let mut first: Option<TypeId> = None;
-        let mut rows: Vec<(Pat, bool, Span)> = Vec::new();
+        let mut rows: Vec<ArmRow> = Vec::new();
         for arm in m.arms() {
             let mark = cx.scope.len();
             let mut state = Arm::default();
@@ -110,6 +122,7 @@ impl<'p> Checker<'p> {
                 Some(p) => self.pattern(cx, p, scrutinee, &mut state),
                 None => Pat::Wild,
             };
+            let refused = state.refused;
             self.bind_arm(cx, state);
             if let Some(guard) = arm.guard() {
                 self.expr(cx, guard, Some(TypeId::BOOL));
@@ -123,7 +136,12 @@ impl<'p> Checker<'p> {
             let span = arm
                 .pattern()
                 .map_or(arm.syntax().span(), |p| p.syntax().span());
-            rows.push((pat, arm.guard().is_some(), span));
+            rows.push(ArmRow {
+                pat,
+                guarded: arm.guard().is_some(),
+                refused,
+                span,
+            });
         }
         let span = m.syntax().span();
         let span = Span {
@@ -250,7 +268,7 @@ impl<'p> Checker<'p> {
                             .map(|(i, v)| (s, i, v.fields.is_some()))
                     });
                     let Some((s, index, payload)) = found else {
-                        self.binder_near_variant(cx, *token, inner);
+                        arm.refused |= self.binder_near_variant(cx, *token, inner);
                         arm.binds.push(Bind {
                             name: token.text().to_owned(),
                             ty: inner,
@@ -347,6 +365,7 @@ impl<'p> Checker<'p> {
                             }
                         }
                     }
+                    arm.refused |= inner_arm.refused;
                     arm.binds.extend(inner_arm.binds);
                     arm.variants.extend(inner_arm.variants);
                 }
@@ -357,21 +376,22 @@ impl<'p> Checker<'p> {
 
     /// Reports a binder that is close to a variant of the sum it matches,
     /// because it would match every value where the variant was meant. A
-    /// binder that starts with `_` is never reported.
-    fn binder_near_variant(&mut self, cx: &Cx, token: SyntaxToken<'_>, ty: TypeId) {
+    /// binder that starts with `_` is never reported. Returns whether the
+    /// binder was reported.
+    fn binder_near_variant(&mut self, cx: &Cx, token: SyntaxToken<'_>, ty: TypeId) -> bool {
         let name = token.text();
         if name.starts_with('_') {
-            return;
+            return false;
         }
         let Some(s) = self.types.as_sum(ty) else {
-            return;
+            return false;
         };
         let sum = self.types.sum(s);
         let Some(variant) = closest(name, sum.variants.iter().map(|v| v.name.as_str()))
             .first()
             .map(|v| (*v).to_owned())
         else {
-            return;
+            return false;
         };
         self.error(
             cx.file,
@@ -380,6 +400,7 @@ impl<'p> Checker<'p> {
                     "did you mean the variant `{variant}`? Write `_{name}` for a binder that matches every value"
                 )),
         );
+        true
     }
 
     #[allow(clippy::too_many_arguments, reason = "the parts of one pattern")]
@@ -586,20 +607,22 @@ impl<'p> Checker<'p> {
         Pat::Ctor(Ctor::Variant(index), sub)
     }
 
-    fn exhaustive(&mut self, cx: &Cx, ty: TypeId, rows: &[(Pat, bool, Span)], span: Span) {
+    fn exhaustive(&mut self, cx: &Cx, ty: TypeId, rows: &[ArmRow], span: Span) {
         let mut search = Search {
             checker: self,
             budget: BUDGET,
         };
         let mut matrix = Matrix::default();
         let mut unreachable = Vec::new();
-        for (pat, guarded, arm_span) in rows {
-            match search.useful(&mut matrix, &[pat], &[ty], 0) {
-                Some(false) => unreachable.push(*arm_span),
-                Some(true) => {}
+        let mut after_refused = false;
+        for row in rows {
+            match search.useful(&mut matrix, &[&row.pat], &[ty], 0) {
+                Some(false) if !after_refused => unreachable.push(row.span),
+                Some(_) => {}
                 None => break,
             }
-            if !guarded && search.add(&mut matrix, vec![pat]).is_none() {
+            after_refused |= row.refused;
+            if !row.guarded && search.add(&mut matrix, vec![&row.pat]).is_none() {
                 break;
             }
         }

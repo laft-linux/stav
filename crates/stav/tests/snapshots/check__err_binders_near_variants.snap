@@ -12,3 +12,9 @@ error[E0448]: `debgu` binds every value
 error[E0448]: `debgu` binds every value
   --> app/main.stav:17:12
   help: did you mean the variant `debug`? Write `_debgu` for a binder that matches every value
+error[E0448]: `debgu` binds every value
+  --> app/main.stav:23:3
+  help: did you mean the variant `debug`? Write `_debgu` for a binder that matches every value
+error[E0448]: `debgu2` binds every value
+  --> app/main.stav:24:3
+  help: did you mean the variant `debug`? Write `_debgu2` for a binder that matches every value

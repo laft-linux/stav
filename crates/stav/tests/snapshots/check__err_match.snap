@@ -29,9 +29,6 @@ error[E0448]: `immediat` binds every value
 error[E0302]: `Ready` has no variant `chek`
   --> app/main.stav:36:3
   help: did you mean `check`?
-warning[W0434]: this arm can never match
-  --> app/main.stav:36:3
-  help: remove it, or move it before the arms that cover it
 error[E0434]: non-exhaustive `match` on `Bool`
   --> app/main.stav:39:28
   note: missing: `false`
