@@ -1,0 +1,26 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0401]: expected `Mode`, found an empty map
+  --> app/main.stav:16:5
+error[E0401]: expected `Mode`, found an empty list
+  --> app/main.stav:17:5
+error[E0401]: expected `Mode`, found `Int`
+  --> app/main.stav:18:5
+error[E0401]: expected `Mode`, found `Float`
+  --> app/main.stav:19:5
+error[E0401]: expected `Mode`, found `Str`
+  --> app/main.stav:20:5
+error[E0401]: expected `Mode`, found `Bool`
+  --> app/main.stav:21:5
+error[E0401]: expected `Mode`, found `none`
+  --> app/main.stav:22:5
+  help: make the type `Option<Mode>`
+error[E0401]: expected `Mode`, found `Path`
+  --> app/main.stav:23:5
+error[E0401]: expected `Mode`, found a list
+  --> app/main.stav:24:5
+error[E0401]: expected `Mode`, found a map
+  --> app/main.stav:25:5

@@ -1,0 +1,13 @@
+type Kind = | nada
+
+struct Root {
+  k: Kind = nada
+  i: Int = 0
+  o: Option<Kind> = none
+  s: Str = ""
+}
+
+k = {}
+i = []
+o = {}
+s = []

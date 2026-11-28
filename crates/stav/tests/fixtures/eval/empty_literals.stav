@@ -1,0 +1,12 @@
+struct S { a: Int = 0 }
+
+struct Root {
+  l:  List<Int> = []
+  t:  Set<Str> = []
+  m:  Map<Str, Int> = {}
+  ol: Option<List<Int>> = []
+  om: Option<Map<Str, Int>> = {}
+  d:  Data = {}
+  e:  Data = []
+  s:  S = {}
+}

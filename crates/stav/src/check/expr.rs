@@ -771,6 +771,20 @@ impl<'p> Checker<'p> {
             }
             return (want, Meaning::Plain);
         }
+        if let Some(want) = want
+            && !matches!(self.types.get(want), Type::Error)
+        {
+            let found = if items.is_empty() {
+                "an empty list"
+            } else {
+                "a list"
+            };
+            self.literal_mismatch(cx, list.syntax().span(), want, found);
+            for item in &items {
+                self.expr(cx, *item, Some(TypeId::ERROR));
+            }
+            return (TypeId::ERROR, Meaning::Plain);
+        }
         let Some((first, rest)) = items.split_first() else {
             if expected.is_none() {
                 self.cannot_infer(cx, list.syntax().span(), "[]");
@@ -935,6 +949,25 @@ impl<'p> Checker<'p> {
         (ty, meaning)
     }
 
+    /// Reports a list or map literal where `want`, a type that no such
+    /// literal can be, is expected. The literal is not inferred on its own
+    /// first, because an empty literal would then fit any type and the
+    /// elements could not use the expected type to resolve names.
+    fn literal_mismatch(&mut self, cx: &Cx, span: Span, want: TypeId, found: &str) {
+        if self.types.has_error(want) {
+            return;
+        }
+        let expected = self.types.render_plain(want);
+        self.error(
+            cx.file,
+            Diagnostic::error(
+                "E0401",
+                span,
+                format!("expected `{expected}`, found {found}"),
+            ),
+        );
+    }
+
     fn map_literal(
         &mut self,
         cx: &mut Cx,
@@ -945,6 +978,25 @@ impl<'p> Checker<'p> {
     ) -> (TypeId, Meaning) {
         let entries: Vec<ast::MapEntry<'p>> = map.entries().collect();
         let span = map.syntax().span();
+        if let Some(want) = want
+            && !matches!(
+                self.types.get(want),
+                Type::Struct(_) | Type::Map(..) | Type::Data | Type::Error
+            )
+        {
+            let found = if entries.is_empty() {
+                "an empty map"
+            } else {
+                "a map"
+            };
+            self.literal_mismatch(cx, span, want, found);
+            for entry in &entries {
+                if let Some(value) = entry.value() {
+                    self.expr(cx, value, Some(TypeId::ERROR));
+                }
+            }
+            return (TypeId::ERROR, Meaning::Plain);
+        }
         match want.map(|w| self.types.get(w).clone()) {
             Some(Type::Struct(s)) => {
                 self.struct_entries(cx, s, &entries, span, partial);

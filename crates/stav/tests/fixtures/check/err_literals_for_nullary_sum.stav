@@ -1,0 +1,25 @@
+type Mode = fast | slow
+
+struct Root {
+  a: Mode = fast
+  b: Mode = fast
+  c: Mode = fast
+  d: Mode = fast
+  e: Mode = fast
+  f: Mode = fast
+  g: Mode = fast
+  h: Mode = fast
+  i: Mode = fast
+  j: Mode = fast
+}
+
+a = {}
+b = []
+c = 1
+d = 1.5
+e = "fast"
+f = true
+g = none
+h = ./fast
+i = [fast]
+j = { fast = 1 }

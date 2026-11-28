@@ -336,7 +336,7 @@ Type checking is bidirectional. Where a position requires a type, that expected 
 - The parameters and the result of a `fn` declaration must be annotated. The parameters of a lambda must be annotated, and its result type may be left out.
 - A `let` binding takes the type of its value unless it is annotated.
 - A list literal has the type of its first element, and every other element is checked against it.
-- `[]`, `{}` and `none` have no type of their own and need an expected type ([E0430](/reference/error-codes#e0430)).
+- `[]`, `{}` and `none` have no type of their own and need an expected type ([E0430](/reference/error-codes#e0430)). The expected type must be one the literal can be: `[]` a list, a set or `Data`, and `{}` a map, a struct or `Data`, or an `Option` of one of these. Anything else is [E0401](/reference/error-codes#e0401), as for `level: Level = {}`.
 - A brace literal without a type name is a struct literal where a struct is expected and a map literal everywhere else.
 - The branches of `if` and `match` must all have one type, the expected type when there is one, or else the type of the first branch.
 
