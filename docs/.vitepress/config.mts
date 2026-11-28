@@ -63,6 +63,7 @@ export default defineConfig({
             { text: 'Late-bound self', link: '/guide/self' },
             { text: 'Imports and modules', link: '/guide/modules' },
             { text: 'Embedding in Rust', link: '/guide/embedding' },
+            { text: 'Two-phase hosts', link: '/guide/two-phase-hosts' },
           ],
         },
         {
