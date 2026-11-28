@@ -11,6 +11,7 @@ expression: output
   },
   "l": "info",
   "name": "debug",
+  "info": "info",
   "loader": "limine",
   "color": "Red",
   "pair": "Green",

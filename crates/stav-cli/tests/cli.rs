@@ -726,6 +726,8 @@ fn paths_render_the_same_from_every_working_directory() {
     "#);
 }
 
+/// Evaluation reads no clock, so the time is varied only through `TZ`,
+/// the one part of the environment a clock reading would depend on.
 #[test]
 fn evaluation_ignores_the_environment_and_the_working_directory() {
     let dir = fixture(

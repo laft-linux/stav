@@ -24,6 +24,7 @@ struct Root {
   s:      S = Cfg { a = 1 }
   l:      L2 = L2.info
   name:   Str = name(debug)
+  info:   Str = name(info)
   loader: Loader = limine
   color:  Color = Red
   pair:   Pair = Green
