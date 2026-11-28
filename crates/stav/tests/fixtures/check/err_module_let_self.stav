@@ -1,0 +1,6 @@
+#- file main.stav
+import "./lib.stav" as m
+
+struct Root { a: Int = 1, b: Int = m.x }
+#- file lib.stav
+let x = self.a

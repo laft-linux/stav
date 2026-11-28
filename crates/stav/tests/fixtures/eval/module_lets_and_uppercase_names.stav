@@ -1,0 +1,19 @@
+#- file main.stav
+import "./lib.stav" as m
+
+type T = A | B
+
+type Level = debug | info
+
+struct User { name: Str = "" }
+
+struct Root {
+  base:  Int = m.base
+  t:     T = A
+  level: Level = Level.info
+  users: Map<Str, User> = {} block user
+}
+
+user Alice { }
+#- file lib.stav
+let base = 1

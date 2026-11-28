@@ -1,0 +1,8 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0606]: `self` cannot be used in a module
+  --> app/lib.stav:1:9
+  help: pass the value as a parameter instead

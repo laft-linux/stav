@@ -1,0 +1,15 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "base": 1,
+  "t": "A",
+  "level": "info",
+  "users": {
+    "Alice": {
+      "name": ""
+    }
+  }
+}
