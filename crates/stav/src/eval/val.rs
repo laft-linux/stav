@@ -335,17 +335,13 @@ impl Val {
             Val::Int(i) => Value::Int(*i),
             Val::Float(f) => Value::Float(*f),
             Val::Str(s) => Value::Str(s.to_string()),
-            Val::Path(p) => {
-                let root = roots
+            Val::Path(p) => Value::Path {
+                root: roots
                     .get(p.root)
                     .map(|r| r.path().to_path_buf())
-                    .unwrap_or_default();
-                Value::Path(if p.rel.is_empty() {
-                    root
-                } else {
-                    root.join(&p.rel)
-                })
-            }
+                    .unwrap_or_default(),
+                rel: p.rel.clone(),
+            },
             Val::Symbol(s) => Value::Symbol {
                 ty: types
                     .symbols

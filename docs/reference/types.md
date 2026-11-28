@@ -10,7 +10,7 @@ Every Stav expression has a type, and the whole program is type checked before a
 | `Int` | signed 64-bit integers | overflow is [E0601](/reference/error-codes#e0601) |
 | `Float` | finite binary64 numbers | a result that is not finite is [E0602](/reference/error-codes#e0602) |
 | `Str` | UTF-8 strings | |
-| `Path` | paths inside an import root | see [path literals](/reference/lexical-structure#path-literals) |
+| `Path` | paths inside an import root | rendered as `./` and the path inside the root, see [path literals](/reference/lexical-structure#path-literals) |
 | `Data` | any value that can be rendered | see [`Data`](#data) |
 | `List<T>` | ordered sequences | |
 | `Set<T>` | sets in a canonical order | `T` must be a [key type](#key-types) |

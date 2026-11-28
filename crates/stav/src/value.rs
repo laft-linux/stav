@@ -27,9 +27,20 @@ pub enum Value {
     Float(f64),
     /// A `Str`.
     Str(String),
-    /// A `Path`: the import root of the file that wrote the path literal,
-    /// joined with the path normalized inside it.
-    Path(PathBuf),
+    /// A `Path`: a path inside the import root of the file that wrote it.
+    ///
+    /// It renders as the path relative to its import root, such as
+    /// `./files/x.conf`, so that the rendering never depends on where the
+    /// import root lies. It converts through serde into the import root's
+    /// directory joined with the relative path, which is what a host needs
+    /// to read the file.
+    Path {
+        /// The directory of the import root, as the host gave it.
+        root: PathBuf,
+        /// The normalized path inside the import root, with `/` between
+        /// its components, or empty for the import root itself.
+        rel: String,
+    },
     /// A value of a host symbol type.
     Symbol {
         /// The name of the symbol type, for example `Pkg`.
@@ -194,7 +205,7 @@ fn describe(value: &Value, out: &mut String) {
         Value::Int(i) => out.push_str(&i.to_string()),
         Value::Float(f) => out.push_str(&format!("{f:?}")),
         Value::Str(s) => out.push_str(&format!("{s:?}")),
-        Value::Path(p) => out.push_str(&p.display().to_string()),
+        Value::Path { rel, .. } => out.push_str(&render::path_text(rel)),
         Value::Symbol { text, .. } => out.push_str(text),
         Value::Ref(label) => out.push_str(label),
         Value::List(items) | Value::Set(items) => {

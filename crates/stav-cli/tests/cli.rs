@@ -698,3 +698,71 @@ fn warnings_are_reported_and_do_not_fail() {
     assert!(json.starts_with("status: 0\n"), "{json}");
     assert!(json.contains(r#""severity":"warning""#), "{json}");
 }
+
+/// A program whose value holds paths.
+const PATHS: &str = "struct Root { p: Path = ./files/x.conf, r: Path = ./ }\n";
+
+#[test]
+fn paths_render_the_same_from_every_working_directory() {
+    let dir = fixture(
+        "paths_render_the_same_from_every_working_directory",
+        &[("dir/app.stav", PATHS)],
+    );
+    let absolute = dir.join("dir/app.stav");
+    let absolute = absolute.to_str().expect("the fixture path is UTF-8");
+    let from_parent = stav(&dir, &["eval", "dir/app.stav", "-o", "json"], "");
+    let from_dir = stav(&dir.join("dir"), &["eval", "app.stav", "-o", "json"], "");
+    let from_root = stav(Path::new("/"), &["eval", absolute, "-o", "json"], "");
+    assert_eq!(from_parent, from_dir);
+    assert_eq!(from_parent, from_root);
+    assert_snapshot!(from_parent, @r#"
+    status: 0
+    --- stdout
+    {
+      "p": "./files/x.conf",
+      "r": "."
+    }
+    --- stderr
+    "#);
+}
+
+#[test]
+fn evaluation_ignores_the_environment_and_the_working_directory() {
+    let dir = fixture(
+        "evaluation_ignores_the_environment_and_the_working_directory",
+        &[("dir/app.stav", PATHS)],
+    );
+    let absolute = dir.join("dir/app.stav");
+    let absolute = absolute.to_str().expect("the fixture path is UTF-8");
+    let run = |cwd: &Path, entry: &str, env: &[(&str, &str)]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_stav"))
+            .args(["eval", "--canonical", entry])
+            .current_dir(cwd)
+            .envs(env.iter().copied())
+            .output()
+            .expect("the stav binary runs");
+        assert!(output.status.success());
+        output.stdout
+    };
+    let first = run(&dir, "dir/app.stav", &[]);
+    assert_eq!(
+        first,
+        run(&dir.join("dir"), "app.stav", &[("HOME", "/nonexistent")])
+    );
+    assert_eq!(
+        first,
+        run(
+            Path::new("/"),
+            absolute,
+            &[("TZ", "Pacific/Kiritimati"), ("LANG", "C")]
+        )
+    );
+    assert_eq!(
+        first,
+        run(
+            &dir,
+            "./dir/app.stav",
+            &[("STAV_UNRELATED", "1"), ("PWD", "/")]
+        )
+    );
+}

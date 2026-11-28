@@ -188,9 +188,15 @@ impl Eval<'_> {
             (Type::Int, Value::Int(i)) => Val::Int(*i),
             (Type::Float, Value::Float(f)) if f.is_finite() => Val::Float(*f),
             (Type::Str, Value::Str(s)) => self.new_str(s.clone(), at).map_err(Stopped)?,
-            (Type::Path, Value::Path(p)) => self.path_input(p).ok_or_else(|| {
-                Mismatch(format!("`{}` is not inside an import root", p.display()))
-            })?,
+            (Type::Path, Value::Path { root, rel }) => {
+                let joined = root.join(rel);
+                self.path_input(&joined).ok_or_else(|| {
+                    Mismatch(format!(
+                        "`{}` is not inside an import root",
+                        joined.display()
+                    ))
+                })?
+            }
             (Type::Symbol(s), Value::Str(text) | Value::Symbol { text, .. }) => {
                 self.symbol(s, text, at).map_err(Stopped)?
             }
@@ -364,7 +370,9 @@ impl Eval<'_> {
             Value::Str(s) | Value::Symbol { text: s, .. } | Value::Ref(s) => {
                 self.new_str(s.clone(), at).map_err(Stopped)?
             }
-            Value::Path(p) => self.new_str(p.display().to_string(), at).map_err(Stopped)?,
+            Value::Path { rel, .. } => self
+                .new_str(crate::render::path_text(rel), at)
+                .map_err(Stopped)?,
             Value::List(items) | Value::Set(items) => {
                 self.reserve(u64::try_from(items.len()).unwrap_or(u64::MAX), at)
                     .map_err(Stopped)?;
@@ -436,7 +444,7 @@ fn kind(value: &Value) -> &'static str {
         Value::Int(_) => "an `Int`",
         Value::Float(_) => "a `Float`",
         Value::Str(_) => "a `Str`",
-        Value::Path(_) => "a `Path`",
+        Value::Path { .. } => "a `Path`",
         Value::Symbol { .. } => "a symbol",
         Value::Ref(_) => "a reference",
         Value::List(_) => "a list",

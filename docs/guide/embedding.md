@@ -137,7 +137,7 @@ backup: https://b.example.org (weight 10)
 primary: https://a.example.org (weight 90)
 ```
 
-`get` reads a value as if it were deserialized from its JSON rendering:
+`get` reads a value as if it were deserialized from its JSON rendering, except for a `Path`:
 
 | Stav | Rust |
 | --- | --- |
@@ -148,8 +148,11 @@ primary: https://a.example.org (weight 90)
 | sum type without payloads | an `enum` with unit variants |
 | sum type with payloads | an externally tagged `enum` |
 | `Option<T>` | `Option<T>` |
-| `Ref<T>`, `Path`, symbol types | `String`, or a type of your own that deserializes from a string |
+| `Path` | `PathBuf`: the directory of its import root, as the host gave it, joined with the path inside the root |
+| `Ref<T>`, symbol types | `String`, or a type of your own that deserializes from a string |
 | `Data` | any type that matches its shape |
+
+A `Path` renders as its path relative to its import root, such as `./files/x.conf`, so the rendering is the same wherever the files lie. A host that needs to read the file converts the path with `get`, or reads the import root and the relative path from `Value::Path`, which holds both.
 
 `AttrPath::root()` names the whole value, and `AttrPath::new(["upstreams", "primary"])` names an attribute inside it. An element of a list or set is named by its position, counted from zero, so `AttrPath::new(["servers", "0"])` is the first element of `servers`. A payload field of a variant follows the name of the variant, the way the variant renders, so the field `cmd` of `ready = check(cmd = ["probe"])` is `ready.check.cmd`. A path that names no attribute, or a value that does not convert, is the error `E0805`.
 

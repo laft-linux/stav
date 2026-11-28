@@ -358,6 +358,23 @@ fn renderings_parse_back_to_the_same_data() {
 }
 
 #[test]
+fn paths_render_relative_to_their_import_root_and_convert_to_host_paths() {
+    let evaluated = evaluate("struct Root { p: Path = ./files/x.conf, r: Path = ./ }\n");
+    assert_eq!(
+        evaluated.to_canonical_json(),
+        r#"{"p":"./files/x.conf","r":"."}"#
+    );
+    let p: PathBuf = evaluated
+        .get(&stav::AttrPath::new(["p"]))
+        .expect("the path converts");
+    assert_eq!(p, Path::new(ROOT_DIR).join("files/x.conf"));
+    let r: PathBuf = evaluated
+        .get(&stav::AttrPath::new(["r"]))
+        .expect("the root converts");
+    assert_eq!(r, Path::new(ROOT_DIR));
+}
+
+#[test]
 fn values_convert_to_host_types_through_serde() {
     use std::collections::BTreeMap;
 

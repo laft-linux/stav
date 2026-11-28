@@ -73,10 +73,14 @@ impl<'de> Deserializer<'de> for &'de Value {
             Value::Str(s) | Value::Ref(s) | Value::Symbol { text: s, .. } => {
                 visitor.visit_borrowed_str(s)
             }
-            Value::Path(p) => match p.to_str() {
-                Some(s) => visitor.visit_borrowed_str(s),
-                None => visitor.visit_string(p.to_string_lossy().into_owned()),
-            },
+            Value::Path { root, rel } => {
+                let joined = if rel.is_empty() {
+                    root.clone()
+                } else {
+                    root.join(rel)
+                };
+                visitor.visit_string(joined.to_string_lossy().into_owned())
+            }
             Value::List(items) | Value::Set(items) => visitor.visit_seq(Seq(items.iter())),
             Value::Map(entries)
             | Value::Struct {
@@ -159,7 +163,7 @@ fn kind(value: &Value) -> &'static str {
         Value::Bool(_) => "a boolean",
         Value::Int(_) => "an integer",
         Value::Float(_) => "a float",
-        Value::Str(_) | Value::Path(_) | Value::Symbol { .. } | Value::Ref(_) => "a string",
+        Value::Str(_) | Value::Path { .. } | Value::Symbol { .. } | Value::Ref(_) => "a string",
         Value::List(_) | Value::Set(_) => "a list",
         Value::Map(_) | Value::Struct { .. } => "a map",
         Value::Variant { .. } => "a variant",

@@ -462,9 +462,10 @@ A path literal starts with `./` or `../` and produces a value of type `Path`.
 - A path is relative to the directory of the file that contains it, and `.` and `..` are resolved lexically.
 - The resolved path must stay inside the import root of the file ([E0702](/reference/error-codes#e0702)).
 - There are no absolute path literals. An absolute path on another system is a string.
-- Stav never reads the file a path names. A `Path` value is the import root joined with the normalized path, and the host decides what to do with it.
+- Stav never reads the file a path names. A `Path` value is its import root and the normalized path inside it, and the host decides what to do with it.
+- A `Path` renders as `./` and its path relative to its import root, and the import root itself renders as `.`. The text never depends on the working directory or on where the import root lies, so the same files render the same everywhere.
 
-The `stav` command uses the directory of the entry file, as written on the command line, as the import root. With the entry file given as `paths.stav`, that directory is empty, so the paths render relative to it:
+The `stav` command uses the directory of the entry file as the import root, so the paths render relative to it:
 
 <!-- file: paths.stav -->
 
@@ -481,10 +482,10 @@ files = [./fixes/one.patch, ./conf/../extra/./two.conf]
 
 ```json
 {
-  "patch": "default.patch",
+  "patch": "./default.patch",
   "files": [
-    "fixes/one.patch",
-    "extra/two.conf"
+    "./fixes/one.patch",
+    "./extra/two.conf"
   ]
 }
 ```

@@ -286,9 +286,12 @@ fn yaml_nests_sequences_and_mappings() {
         Value::List(vec![Value::Int(1), Value::Int(2)]),
         Value::Map(entries(&[("a", Value::Int(1)), ("b", Value::List(vec![]))])),
         Value::Float(1e-7),
-        Value::Path(PathBuf::from("/etc/fix.patch")),
+        Value::Path {
+            root: PathBuf::from("/etc"),
+            rel: "fix.patch".to_owned(),
+        },
     ]);
-    let expected = "- - 1\n  - 2\n- a: 1\n  b: []\n- 1.0e-7\n- /etc/fix.patch\n";
+    let expected = "- - 1\n  - 2\n- a: 1\n  b: []\n- 1.0e-7\n- \"./fix.patch\"\n";
     assert_eq!(value.render(Format::Yaml).unwrap(), expected);
 }
 

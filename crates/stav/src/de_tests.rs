@@ -50,7 +50,10 @@ fn job(build: Value) -> Value {
             ),
             (
                 "patch".to_owned(),
-                Value::Path(PathBuf::from("/etc/fix.patch")),
+                Value::Path {
+                    root: PathBuf::from("/etc"),
+                    rel: "fix.patch".to_owned(),
+                },
             ),
         ],
     }

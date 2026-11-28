@@ -56,12 +56,22 @@ impl std::error::Error for RenderError {}
 pub(crate) fn text(value: &Value) -> Option<std::borrow::Cow<'_, str>> {
     Some(match value {
         Value::Str(s) | Value::Ref(s) | Value::Symbol { text: s, .. } => s.as_str().into(),
-        Value::Path(p) => p.to_string_lossy(),
+        Value::Path { rel, .. } => path_text(rel).into(),
         Value::Variant {
             name, fields: None, ..
         } => name.as_str().into(),
         _ => return None,
     })
+}
+
+/// Returns the text a path renders as: `./` and the path relative to its
+/// import root, or `.` for the import root itself.
+pub(crate) fn path_text(rel: &str) -> String {
+    if rel.is_empty() {
+        ".".to_owned()
+    } else {
+        format!("./{rel}")
+    }
 }
 
 /// The entries of a value that renders as an object, a table or a
