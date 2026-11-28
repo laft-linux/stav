@@ -152,7 +152,7 @@ primary: https://a.example.org (weight 90)
 | `Ref<T>`, symbol types | `String`, or a type of your own that deserializes from a string |
 | `Data` | any type that matches its shape |
 
-A `Path` renders as its path relative to its import root, such as `./files/x.conf`, so the rendering is the same wherever the files lie. A host that needs to read the file converts the path with `get`, or reads the import root and the relative path from `Value::Path`, which holds both.
+A `Path` renders as its path relative to its import root, such as `./files/x.conf`, so the rendering is the same wherever the files lie. A host that needs to read the file converts the path with `get`, or reads the import root and the relative path from `Value::Path`, which holds both. A `Value::Path` that a host passes where a `Data` value is expected, such as a host value for a `Data` field, becomes its rendered text `./...` and loses its import root, so pass a path where a `Path` is expected when the program or the host needs the file.
 
 `AttrPath::root()` names the whole value, and `AttrPath::new(["upstreams", "primary"])` names an attribute inside it. An element of a list or set is named by its position, counted from zero, so `AttrPath::new(["servers", "0"])` is the first element of `servers`. A payload field of a variant follows the name of the variant, the way the variant renders, so the field `cmd` of `ready = check(cmd = ["probe"])` is `ready.check.cmd`. A path that names no attribute, or a value that does not convert, is the error `E0805`.
 

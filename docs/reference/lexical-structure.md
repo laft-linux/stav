@@ -463,7 +463,7 @@ A path literal starts with `./` or `../` and produces a value of type `Path`.
 - The resolved path must stay inside the import root of the file ([E0702](/reference/error-codes#e0702)).
 - There are no absolute path literals. An absolute path on another system is a string.
 - Stav never reads the file a path names. A `Path` value is its import root and the normalized path inside it, and the host decides what to do with it.
-- A `Path` renders as `./` and its path relative to its import root, and the import root itself renders as `.`. The text never depends on the working directory or on where the import root lies, so the same files render the same everywhere.
+- A `Path` renders as `./` and its path relative to its import root, and the import root itself renders as `.`. The text never depends on the working directory or on where the import root lies, so the same files render the same everywhere. A program with several import roots can hold two paths with the same relative path in different roots. They are different values that render as the same text, so `==` between them is false and a `Set<Path>` that holds both renders that text twice.
 
 The `stav` command uses the directory of the entry file as the import root, so the paths render relative to it:
 
