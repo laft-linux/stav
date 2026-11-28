@@ -5,11 +5,11 @@ use stav::{Host, ImportRoot, Limits, MemoryLoader, RootSpec, check};
 
 fn checked(source: &str) -> stav::Checked {
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     check(&host, &root)
         .unwrap_or_else(|diagnostics| panic!("the program must check:\n{diagnostics}\n{source}"))
 }

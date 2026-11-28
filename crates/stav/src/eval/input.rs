@@ -44,11 +44,7 @@ use crate::value::Value;
 ///     path: "build/target".to_owned(),
 ///     source: "let arch: Str = \"x86_64\"\n".to_owned(),
 /// });
-/// let root = RootSpec {
-///     root_struct: "Root".to_owned(),
-///     entries: vec!["app/main.stav".into()],
-///     import_roots: vec![ImportRoot::new("app")],
-/// };
+/// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
 /// let checked = stav::check(&host, &root)?;
 /// for arch in ["aarch64", "riscv64"] {
 ///     let values = HostValues::new().with("build/target", "arch", Value::Str(arch.to_owned()));

@@ -97,11 +97,7 @@ impl Checked {
     /// let source = "type Level = debug | info\nstruct Root { n: Int = 0 }\n\
     ///               let info: Level = Level.debug\nfn level() -> Level = info\nn = 1 / 0\n";
     /// let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/main.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     /// let checked = stav::check(&host, &root)?;
     /// let errors = checked.eval(&Limits::default()).unwrap_err();
     /// let all = checked.diagnostics(checked.warnings().iter().chain(errors.iter()).cloned());
@@ -230,11 +226,7 @@ fn inputs(program: &Program, spec: &RootSpec) -> BTreeMap<PathBuf, FileId> {
 ///     "app/main.stav",
 ///     "type Level = debug | info\nstruct Root { level: Level = info }\nlevel = debgu\n",
 /// );
-/// let root = RootSpec {
-///     root_struct: "Root".to_owned(),
-///     entries: vec!["app/main.stav".into()],
-///     import_roots: vec![ImportRoot::new("app")],
-/// };
+/// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
 /// let errors = stav::check(&Host::new(loader), &root).unwrap_err();
 /// let error = &errors.iter().next().unwrap().diagnostic;
 /// assert_eq!(error.code, "E0302");
@@ -531,7 +523,7 @@ impl<'p> Checker<'p> {
     fn run(&mut self, spec: &RootSpec) {
         self.declare();
         self.resolve_declarations();
-        self.find_root(&spec.root_struct);
+        self.find_root(spec.root_struct.as_deref());
         self.check_structure();
         self.check_declaration_bodies();
         if let Some(root) = self.root {

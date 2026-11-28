@@ -72,11 +72,7 @@ fn run(host: &Host, root: &RootSpec) -> String {
 
 fuzz_target!(|input: &str| {
     let host = host(input);
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     let first = run(&host, &root);
     assert_eq!(first, run(&host, &root));
 });

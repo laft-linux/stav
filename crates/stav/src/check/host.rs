@@ -241,16 +241,48 @@ impl fmt::Debug for Host {
 }
 
 /// What to check: the root struct, the entry files and the import roots.
+///
+/// A host builds one with [`RootSpec::new`] and may then assign its public
+/// fields. Later versions may add fields with defaults, so a `RootSpec`
+/// cannot be built with a struct literal.
+///
+/// # Examples
+///
+/// ```
+/// use stav::{ImportRoot, RootSpec};
+///
+/// let mut root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
+/// root.entries.push("app/local.stav".into());
+/// assert_eq!(root.root_struct.as_deref(), Some("Root"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RootSpec {
     /// The name of the root struct, declared in the prelude or in an entry
-    /// file.
-    pub root_struct: String,
+    /// file. A root without one fails the check with `E0710`.
+    pub root_struct: Option<String>,
     /// The entry files, each a body of the root struct, in evaluation
     /// order. Each must lie inside one of the import roots.
     pub entries: Vec<PathBuf>,
     /// The directories that files of the root may reference.
     pub import_roots: Vec<ImportRoot>,
+}
+
+impl RootSpec {
+    /// Returns a root whose entry files `entries` are bodies of the struct
+    /// named `root_struct`, and whose files may reference the directories
+    /// `import_roots`.
+    pub fn new(
+        root_struct: impl Into<String>,
+        entries: Vec<PathBuf>,
+        import_roots: Vec<ImportRoot>,
+    ) -> Self {
+        Self {
+            root_struct: Some(root_struct.into()),
+            entries,
+            import_roots,
+        }
+    }
 }
 
 /// A [`Loader`] that serves files and standard modules from memory.
@@ -265,11 +297,7 @@ pub struct RootSpec {
 ///
 /// let loader = MemoryLoader::new()
 ///     .with_file("app/main.stav", "struct Root { port: Int = 80 }\nport = 8080\n");
-/// let root = RootSpec {
-///     root_struct: "Root".to_owned(),
-///     entries: vec!["app/main.stav".into()],
-///     import_roots: vec![ImportRoot::new("app")],
-/// };
+/// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
 /// let checked = stav::check(&Host::new(loader), &root);
 /// assert!(checked.is_ok());
 /// ```

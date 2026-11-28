@@ -122,11 +122,11 @@ fn checked(args: &RootArgs, emitter: &Emitter) -> io::Result<Option<Checked>> {
     let host = Host::new(DiskLoader {
         std_dir: args.std.clone(),
     });
-    let root = RootSpec {
-        root_struct: args.root.clone(),
-        entries: vec![entry],
-        import_roots: vec![ImportRoot::new(import_root)],
-    };
+    let root = RootSpec::new(
+        args.root.clone(),
+        vec![entry],
+        vec![ImportRoot::new(import_root)],
+    );
     match stav::check(&host, &root) {
         Ok(checked) => Ok(Some(checked)),
         Err(diagnostics) => {

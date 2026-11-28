@@ -176,11 +176,7 @@ impl Diagnostics {
     ///
     /// let loader = MemoryLoader::new()
     ///     .with_file("app/main.stav", "import \"../secret.stav\" as s\nstruct Root {}\n");
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/main.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     /// let errors = stav::check(&Host::new(loader), &root).unwrap_err();
     /// let ours = errors.with_items(errors.iter().map(|item| match item.diagnostic.code {
     ///     "E0702" => FileDiagnostic {

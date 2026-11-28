@@ -126,11 +126,7 @@ fn run(checked: &Checked, limits: &Limits) -> String {
 
 fuzz_target!(|input: &str| {
     let host = host(input);
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     let Ok(checked) = stav::check(&host, &root) else {
         return;
     };

@@ -2465,7 +2465,7 @@ List every entry file once.
 
 ### E0710
 
-The root struct does not exist. The `stav` command looks for a struct named `Root` in the entry file, or the struct `--root` names.
+The root struct does not exist, or a host checks a root that names no root struct. The `stav` command looks for a struct named `Root` in the entry file, or the struct `--root` names.
 
 <!-- file: e0710.stav -->
 

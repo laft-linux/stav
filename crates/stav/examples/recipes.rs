@@ -131,11 +131,7 @@ fn main() {
             parse: accept,
         })
         .collect();
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries,
-        import_roots: vec![ImportRoot::new("repo")],
-    };
+    let root = RootSpec::new("Root", entries, vec![ImportRoot::new("repo")]);
     let start = Instant::now();
     let checked = match stav::check(&host, &root) {
         Ok(checked) => checked,

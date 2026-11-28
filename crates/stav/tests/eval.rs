@@ -153,11 +153,7 @@ fn fixture(text: &str) -> Fixture {
     host.implicit_refs = implicit;
     Fixture {
         host,
-        root: RootSpec {
-            root_struct,
-            entries,
-            import_roots: vec![ImportRoot::new(ROOT_DIR)],
-        },
+        root: RootSpec::new(root_struct, entries, vec![ImportRoot::new(ROOT_DIR)]),
         formats,
         limits,
     }
@@ -664,11 +660,11 @@ fn target_program() -> stav::Checked {
         path: "build/unused".to_owned(),
         source: "let level: Int = 1\n".to_owned(),
     });
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new(ROOT_DIR)],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new(ROOT_DIR)],
+    );
     check(&host, &root).expect("the program checks")
 }
 
@@ -791,11 +787,11 @@ fn toolchain_program() -> stav::Checked {
         path: "build/target".to_owned(),
         source: module.to_owned(),
     });
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new(ROOT_DIR)],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new(ROOT_DIR)],
+    );
     check(&host, &root).expect("the program checks")
 }
 

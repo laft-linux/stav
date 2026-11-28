@@ -1373,21 +1373,40 @@ impl<'p> Checker<'p> {
             .collect()
     }
 
+    /// Returns the struct named `name` among the structs of the prelude
+    /// and the entry files, as the root struct is found.
+    pub(super) fn entry_struct(&self, name: &str) -> Option<StructId> {
+        let prelude = self.prelude.types.get(name).copied();
+        let entries = self
+            .program
+            .entries
+            .iter()
+            .map(|entry| self.scopes[entry.index()].types.get(name).copied());
+        std::iter::once(prelude)
+            .chain(entries)
+            .flatten()
+            .find_map(|item| match self.expand_alias(item) {
+                TypeItem::Struct(s) => Some(s),
+                _ => None,
+            })
+    }
+
     /// Finds the root struct.
-    pub(super) fn find_root(&mut self, name: &str) {
-        let mut found = match self.prelude.types.get(name).map(|&i| self.expand_alias(i)) {
-            Some(TypeItem::Struct(s)) => Some(s),
-            _ => None,
+    pub(super) fn find_root(&mut self, name: Option<&str>) {
+        let Some(name) = name else {
+            let file = self.program.entries.first().copied();
+            self.report(
+                file,
+                Diagnostic::error(
+                    "E0710",
+                    Span { start: 0, end: 0 },
+                    "the root has no root struct",
+                )
+                .with_help("name the struct that the entry files are bodies of"),
+            );
+            return;
         };
-        for &entry in &self.program.entries {
-            if found.is_some() {
-                break;
-            }
-            let item = self.scopes[entry.index()].types.get(name).copied();
-            if let Some(TypeItem::Struct(s)) = item.map(|i| self.expand_alias(i)) {
-                found = Some(s);
-            }
-        }
+        let found = self.entry_struct(name);
         if found.is_none() {
             let file = self.program.entries.first().copied();
             self.report(

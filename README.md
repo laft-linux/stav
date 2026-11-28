@@ -121,11 +121,7 @@ upstream backup { url = "https://b.example.org" }
 
 fn main() -> Result<(), Diagnostics> {
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", SOURCE));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     let checked = stav::check(&host, &root)?;
     let evaluated = checked.eval(&Limits::default())?;
     let upstreams: BTreeMap<String, Upstream> = evaluated.get(&AttrPath::new(["upstreams"]))?;

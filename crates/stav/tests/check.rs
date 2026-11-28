@@ -114,11 +114,7 @@ fn fixture(text: &str) -> Fixture {
     host.symbols = symbols;
     Fixture {
         host,
-        root: RootSpec {
-            root_struct,
-            entries,
-            import_roots: vec![ImportRoot::new(ROOT_DIR)],
-        },
+        root: RootSpec::new(root_struct, entries, vec![ImportRoot::new(ROOT_DIR)]),
     }
 }
 
@@ -215,11 +211,11 @@ fn codes(host: &Host, root: &RootSpec) -> Vec<&'static str> {
 }
 
 fn app_root() -> RootSpec {
-    RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec![Path::new(ROOT_DIR).join("main.stav")],
-        import_roots: vec![ImportRoot::new(ROOT_DIR)],
-    }
+    RootSpec::new(
+        "Root",
+        vec![Path::new(ROOT_DIR).join("main.stav")],
+        vec![ImportRoot::new(ROOT_DIR)],
+    )
 }
 
 #[test]
@@ -259,21 +255,27 @@ fn loader_errors_render_their_file_and_reason() {
 #[test]
 fn entries_outside_their_import_root_are_refused() {
     let loader = MemoryLoader::new().with_file("./../main.stav", "struct Root { a: Int = 1 }\n");
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["../main.stav".into()],
-        import_roots: vec![ImportRoot::new(".")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["../main.stav".into()],
+        vec![ImportRoot::new(".")],
+    );
     assert_eq!(codes(&Host::new(loader), &root), vec!["E0702"]);
+}
+
+#[test]
+fn a_root_without_a_root_struct_is_refused() {
+    let loader = MemoryLoader::new().with_file("app/main.stav", "struct Root { a: Int = 1 }\n");
+    let mut root = app_root();
+    root.root_struct = None;
+    assert_eq!(codes(&Host::new(loader), &root), vec!["E0710"]);
 }
 
 #[test]
 fn entries_listed_twice_are_refused() {
     let loader = MemoryLoader::new().with_file("app/main.stav", "struct Root { a: Int = 1 }\n");
-    let root = RootSpec {
-        entries: vec!["app/main.stav".into(), "app/./main.stav".into()],
-        ..app_root()
-    };
+    let mut root = app_root();
+    root.entries = vec!["app/main.stav".into(), "app/./main.stav".into()];
     assert_eq!(codes(&Host::new(loader), &root), vec!["E0708"]);
 }
 
@@ -296,11 +298,11 @@ fn entries_belong_to_the_innermost_import_root() {
         )
         .with_file("app/sub/lib.stav", "let x = 1\n")
         .with_file("app/lib.stav", "let y = 1\n");
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/sub/./main.stav".into()],
-        import_roots: vec![ImportRoot::new("app"), ImportRoot::new("app/sub")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/sub/./main.stav".into()],
+        vec![ImportRoot::new("app"), ImportRoot::new("app/sub")],
+    );
     let checked = check(&Host::new(loader), &root).expect("the program checks");
     let names: Vec<&str> = checked.files().map(|(_, name)| name).collect();
     assert_eq!(names, ["app/sub/main.stav", "app/sub/lib.stav"]);
@@ -311,10 +313,8 @@ fn entries_belong_to_the_innermost_import_root() {
             "import \"../lib.stav\" as lib\nstruct Root { a: Int = 1 }\n",
         )
         .with_file("app/lib.stav", "let y = 1\n");
-    let only_sub = RootSpec {
-        import_roots: vec![ImportRoot::new("app/sub")],
-        ..root
-    };
+    let mut only_sub = root;
+    only_sub.import_roots = vec![ImportRoot::new("app/sub")];
     assert_eq!(codes(&Host::new(escaping), &only_sub), vec!["E0702"]);
 }
 

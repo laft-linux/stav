@@ -68,11 +68,11 @@ fn formatted_fixtures_are_left_unchanged() {
 /// returns its canonical JSON.
 fn evaluate(source: &str) -> String {
     let host = stav::Host::new(stav::MemoryLoader::new().with_file("app/main.stav", source));
-    let root = stav::RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![stav::ImportRoot::new("app")],
-    };
+    let root = stav::RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![stav::ImportRoot::new("app")],
+    );
     stav::check(&host, &root)
         .and_then(|checked| checked.eval(&stav::Limits::default()))
         .map(|evaluated| evaluated.to_canonical_json())

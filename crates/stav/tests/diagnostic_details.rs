@@ -16,11 +16,11 @@ fn duplicate_computed_map_keys_point_at_the_second_key() {
                  m = {expression}\n"
             );
             let host = Host::new(MemoryLoader::new().with_file("app/main.stav", &text));
-            let root = RootSpec {
-                root_struct: "Root".to_owned(),
-                entries: vec!["app/main.stav".into()],
-                import_roots: vec![ImportRoot::new("app")],
-            };
+            let root = RootSpec::new(
+                "Root",
+                vec!["app/main.stav".into()],
+                vec![ImportRoot::new("app")],
+            );
             let checked = check(&host, &root).expect("computed keys must pass checking");
             let diagnostics = checked
                 .eval(&Limits::default())

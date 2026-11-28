@@ -5,11 +5,11 @@ use stav::{Diagnostics, Host, ImportRoot, Limits, MemoryLoader, RootSpec, check}
 
 fn evaluate(source: &str) -> Result<Value, Diagnostics> {
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     let checked = check(&host, &root)
         .unwrap_or_else(|diagnostics| panic!("the program must check:\n{diagnostics}"));
     let value = checked.eval(&Limits::default())?;
@@ -658,11 +658,11 @@ fn imported_nullary_sum_types_merge_as_scalars_inside_options() {
                  o = opt(self.x)\no = types.Mode.fast\n",
             ),
     );
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     let checked = check(&host, &root).expect("imported types check");
     let value = checked
         .eval(&Limits::default())

@@ -16,11 +16,11 @@ fn inputs(variant: &str) -> Vec<(String, String)> {
         path: "ns/target".to_owned(),
         source: format!("let variant = \"{variant}\"\n"),
     }];
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     check(&host, &root)
         .expect("the program checks")
         .inputs()

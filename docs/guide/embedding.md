@@ -83,11 +83,11 @@ fn load() -> Result<Config, Diagnostics> {
         .with_file("config/base.stav", BASE)
         .with_file("config/production.stav", PRODUCTION);
     let host = Host::new(loader);
-    let root = RootSpec {
-        root_struct: "Config".to_owned(),
-        entries: vec!["config/base.stav".into(), "config/production.stav".into()],
-        import_roots: vec![ImportRoot::new("config")],
-    };
+    let root = RootSpec::new(
+        "Config",
+        vec!["config/base.stav".into(), "config/production.stav".into()],
+        vec![ImportRoot::new("config")],
+    );
 
     let checked = stav::check(&host, &root)?;
     for warning in checked.warnings().iter() {
@@ -238,11 +238,7 @@ impl Loader for DiskLoader {
 
 fn main() {
     let dir = PathBuf::from("config");
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec![dir.join("main.stav")],
-        import_roots: vec![ImportRoot::new(&dir)],
-    };
+    let root = RootSpec::new("Root", vec![dir.join("main.stav")], vec![ImportRoot::new(&dir)]);
     let result = stav::check(&Host::new(DiskLoader), &root)
         .and_then(|checked| checked.eval(&Limits::default()));
     match result {
@@ -332,11 +328,7 @@ fn build(arch: &str) -> Result<String, Diagnostics> {
         source: format!("let arch: Arch = {arch}\n"),
     });
 
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["image/main.stav".into()],
-        import_roots: vec![ImportRoot::new("image")],
-    };
+    let root = RootSpec::new("Root", vec!["image/main.stav".into()], vec![ImportRoot::new("image")]);
     let evaluated = stav::check(&host, &root)?.eval(&Limits::default())?;
 
     let unknown: Vec<FileDiagnostic> = evaluated

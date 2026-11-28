@@ -13,11 +13,11 @@ struct Download {
 
 fn checked(source: &str) -> Result<stav::Checked, Diagnostics> {
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     check(&host, &root)
 }
 

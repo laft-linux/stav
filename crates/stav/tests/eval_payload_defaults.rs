@@ -9,11 +9,11 @@ fn evaluate(source: &str) -> Result<Value, Diagnostics> {
 
 fn evaluate_with_limits(source: &str, limits: &Limits) -> Result<Value, Diagnostics> {
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     let checked = check(&host, &root)
         .unwrap_or_else(|errors| panic!("the program must check:\n{errors}\n{source}"));
     let evaluated = checked.eval(limits)?;
@@ -316,11 +316,11 @@ fn references_inside_payload_defaults_are_validated() {
 fn public_values_render_and_deserialize_complete_payloads() {
     let source = "type B = item(n: Int = 6)\nstruct Root { b: List<B> = [B.item()] }";
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     let evaluated = check(&host, &root)
         .unwrap()
         .eval(&Limits::default())

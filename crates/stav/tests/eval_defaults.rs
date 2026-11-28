@@ -5,11 +5,11 @@ use stav::{Diagnostics, Host, ImportRoot, Limits, MemoryLoader, RootSpec, check}
 
 fn checked(source: &str) -> stav::Checked {
     let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    let root = RootSpec {
-        root_struct: "Root".to_owned(),
-        entries: vec!["app/main.stav".into()],
-        import_roots: vec![ImportRoot::new("app")],
-    };
+    let root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     check(&host, &root)
         .unwrap_or_else(|diagnostics| panic!("the program must check:\n{diagnostics}\n{source}"))
 }
@@ -410,15 +410,12 @@ fn whole_conflict_labels_keep_disjoint_empty_blocks_and_other_files() {
                 .with_file("app/main.stav", &main)
                 .with_file("app/overlay.stav", &overlay),
         );
-        let root = RootSpec {
-            root_struct: "Root".to_owned(),
-            entries: if include {
-                vec!["app/main.stav".into()]
-            } else {
-                vec!["app/main.stav".into(), "app/overlay.stav".into()]
-            },
-            import_roots: vec![ImportRoot::new("app")],
+        let entries = if include {
+            vec!["app/main.stav".into()]
+        } else {
+            vec!["app/main.stav".into(), "app/overlay.stav".into()]
         };
+        let root = RootSpec::new("Root", entries, vec![ImportRoot::new("app")]);
         let program = check(&host, &root).unwrap();
         let error = program.eval(&Limits::default()).unwrap_err();
         let diagnostic = &error.iter().next().unwrap().diagnostic;

@@ -148,11 +148,7 @@ impl Evaluated {
     ///
     /// let source = "struct Root { ports: List<Int> = [] }\nports = [80, 443]\n";
     /// let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/main.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     /// let evaluated = stav::check(&host, &root)?.eval(&Limits::default())?;
     /// let ports: Vec<u16> = evaluated.get(&AttrPath::new(["ports"]))?;
     /// assert_eq!(ports, [80, 443]);
@@ -207,11 +203,7 @@ impl Evaluated {
     ///               ports = [80, 443]\nenv = { LANG = \"C\", TZ = \"UTC\" }\n\
     ///               ready = check(cmd = [\"probe\", \"-q\"])\n";
     /// let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/main.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     /// let evaluated = stav::check(&host, &root)?.eval(&Limits::default())?;
     /// let text = |path: &str| -> Vec<&str> {
     ///     let path: AttrPath = path.parse().unwrap();
@@ -247,11 +239,7 @@ impl Evaluated {
     /// let source = "struct Root { a: Int = 0, b: Int = 0, c: Int = 0, d: Int = 0 }\n\
     ///               a = force(1)\nb = default(2)\nc = 3\n";
     /// let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/main.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     /// let evaluated = stav::check(&host, &root)?.eval(&Limits::default())?;
     /// let priority = |key: &str| evaluated.priority(&AttrPath::new([key]));
     /// assert_eq!(priority("a"), Some(Priority::Force));
@@ -295,11 +283,7 @@ impl Evaluated {
     ///     constructor: "pkg".to_owned(),
     ///     parse: |text| Ok(text.to_owned()),
     /// });
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/main.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
     /// let evaluated = stav::check(&host, &root)?.eval(&Limits::default())?;
     /// let found: Vec<String> = evaluated
     ///     .symbol_paths("Pkg")
@@ -401,11 +385,11 @@ impl Checked {
     /// let loader = MemoryLoader::new()
     ///     .with_file("app/base.stav", base)
     ///     .with_file("app/prod.stav", prod);
-    /// let root = RootSpec {
-    ///     root_struct: "Root".to_owned(),
-    ///     entries: vec!["app/base.stav".into(), "app/prod.stav".into()],
-    ///     import_roots: vec![ImportRoot::new("app")],
-    /// };
+    /// let root = RootSpec::new(
+    ///     "Root",
+    ///     vec!["app/base.stav".into(), "app/prod.stav".into()],
+    ///     vec![ImportRoot::new("app")],
+    /// );
     /// let evaluated = stav::check(&Host::new(loader), &root)?.eval(&Limits::default())?;
     /// assert_eq!(evaluated.to_canonical_json(), r#"{"port":443}"#);
     /// # Ok::<(), stav::Diagnostics>(())
