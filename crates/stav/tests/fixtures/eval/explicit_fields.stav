@@ -1,0 +1,46 @@
+type B =
+  | cargo(n: Int = 1, k: Int = 4)
+  | meson(o: Int = 0)
+
+struct S { port: Int = 1, host: Str = "h" }
+
+struct Download {
+  version: Str
+  url:     Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+fn mk() -> S = S { host = "a" }
+
+fn download(v: Str) -> Download = Download { version = v }
+
+let v = S { host = "a" }
+
+struct Root {
+  called:   S
+  literal:  S
+  bound:    S
+  same:     Bool = S { port = 1 } == S { }
+  m:        Map<Str, S> = {}
+  l:        List<S> = []
+  b:        B
+  d:        Download = download("1")
+}
+
+called      = mk()
+called.port = 5
+
+literal      = S { host = "a" }
+literal.port = 5
+
+bound      = v
+bound.port = 5
+
+m        = { a = v }
+m.a.port = 8
+
+l = [v]
+
+b = cargo(k = 5)
+b cargo { n = 7 }
+
+d.version = "9"

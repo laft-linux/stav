@@ -1,0 +1,42 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "called": {
+    "port": 5,
+    "host": "a"
+  },
+  "literal": {
+    "port": 5,
+    "host": "a"
+  },
+  "bound": {
+    "port": 5,
+    "host": "a"
+  },
+  "same": true,
+  "m": {
+    "a": {
+      "port": 8,
+      "host": "a"
+    }
+  },
+  "l": [
+    {
+      "port": 1,
+      "host": "a"
+    }
+  ],
+  "b": {
+    "cargo": {
+      "n": 7,
+      "k": 5
+    }
+  },
+  "d": {
+    "version": "9",
+    "url": "https://example.org/tool-9.tar.gz"
+  }
+}

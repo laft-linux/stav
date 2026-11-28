@@ -1,0 +1,19 @@
+struct S { port: Int = 1, host: Str = "h" }
+
+fn mk() -> S = S { host = "a" }
+
+let v = S { host = "a" }
+
+struct Root { called: S, literal: S, bound: S, d: Data = none }
+
+called      = mk()
+called.host = "b"
+
+literal      = S { host = "a" }
+literal.host = "b"
+
+bound      = v
+bound.host = "b"
+
+d = v
+d = { port = 3 }
