@@ -1,0 +1,13 @@
+type Profile = default | custom
+
+struct Root {
+  a:       Int = 0
+  b:       Int = f(3)
+  profile: Profile = custom
+}
+
+fn f(default: Int) -> Int = default
+
+profile = default
+a       = force(1)
+a       = 2

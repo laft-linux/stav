@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use super::builtins::PRIORITY_MARKERS;
 use super::load::{FileId, Role};
 use super::model::{LocalDef, LocalId, SelfRead, Step};
 use super::suggest::did_you_mean;
@@ -252,6 +253,7 @@ impl<'p> Checker<'p> {
                     let Some((name, span)) = token_name(decl.name()) else {
                         continue;
                     };
+                    self.check_marker_name(id, &name, span);
                     if let Some(&first) = spans.get(&name) {
                         self.duplicate(id, &name, span, first);
                         continue;
@@ -324,6 +326,20 @@ impl<'p> Checker<'p> {
             return false;
         }
         true
+    }
+
+    /// Reports a function or payload variant named after a priority
+    /// marker, because a bare call of that name is always the marker.
+    fn check_marker_name(&mut self, file: FileId, name: &str, span: Span) {
+        if PRIORITY_MARKERS.contains(&name) {
+            self.error(
+                file,
+                Diagnostic::error("E0301", span, format!("`{name}` is a priority marker"))
+                    .with_help(
+                        "choose another name, because a call of this name is always the marker",
+                    ),
+            );
+        }
     }
 
     fn duplicate(&mut self, file: FileId, name: &str, span: Span, first: Span) {
@@ -511,6 +527,9 @@ impl<'p> Checker<'p> {
                 continue;
             }
             seen.insert(name.clone(), span);
+            if variant.params().is_some() {
+                self.check_marker_name(file, &name, span);
+            }
             let fields = variant.params().map(|params| {
                 let params = self.resolve_params(file, params, owner);
                 for (param, node) in params.iter().zip(

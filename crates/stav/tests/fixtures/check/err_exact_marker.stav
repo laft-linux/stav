@@ -1,0 +1,4 @@
+struct Root { a: Int = 0, b: Int = 0 }
+
+a = exact(1)
+b = 1 + exact(2)

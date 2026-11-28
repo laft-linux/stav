@@ -145,6 +145,10 @@ pub(crate) fn lookup(name: &str) -> Option<Builtin> {
         .map(|(_, b, _)| *b)
 }
 
+/// The names whose bare calls are always priority markers. `exact` is
+/// reserved for a marker that is not available yet.
+pub(crate) const PRIORITY_MARKERS: [&str; 3] = ["default", "force", "exact"];
+
 /// Returns the names of every built-in function.
 pub(crate) fn names() -> impl Iterator<Item = &'static str> {
     BUILTINS.iter().map(|(n, ..)| *n)

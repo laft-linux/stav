@@ -1,0 +1,14 @@
+#- file main.stav
+import "./lib.stav" as m
+
+fn force(x: Int) -> Int = x
+
+fn default() -> Int = 1
+
+fn exact(x: Int) -> Int = x
+
+type P = | force(x: Int) | weak
+
+struct Root { a: Int = m.force(1), p: P = weak }
+#- file lib.stav
+fn force(x: Int) -> Int = x

@@ -1,8 +1,8 @@
 //! Typing calls: of top-level functions, payload variants, built-in
 //! functions, symbol constructors and function values.
 
-use super::builtins::{self, Builtin};
-use super::decls::GlobalKind;
+use super::builtins::{self, Builtin, PRIORITY_MARKERS};
+use super::decls::{GlobalKind, ValueItem};
 use super::expr::PathItem;
 use super::model::{CallFact, Callee, ExprFact, Fact, Meaning};
 use super::suggest::did_you_mean;
@@ -193,6 +193,36 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Reports a bare call of a priority marker name while a binding of
+    /// that name is in scope, and returns whether there is one. A top-level
+    /// function of that name is not counted, because its declaration is
+    /// already an error.
+    pub(super) fn marker_shadowed(&mut self, cx: &Cx, token: SyntaxToken<'_>) -> bool {
+        let name = token.text();
+        let shadowed = cx.lookup(name).is_some()
+            || match self.lookup_value(cx.file, name) {
+                Some(ValueItem::Global(g)) => {
+                    matches!(self.globals[g.index()].kind, GlobalKind::Let(_))
+                }
+                Some(ValueItem::Module(_)) => true,
+                None => false,
+            };
+        if shadowed {
+            self.error(
+                cx.file,
+                Diagnostic::error(
+                    "E0307",
+                    token.span(),
+                    format!(
+                        "`{name}` here is the priority marker, but a binding `{name}` is in scope"
+                    ),
+                )
+                .with_help("rename the binding"),
+            );
+        }
+        shadowed
+    }
+
     /// Resolves what a call calls.
     fn callee(&mut self, cx: &mut Cx, callee: Expr<'p>, want: Option<TypeId>) -> CallTarget {
         let span = callee.syntax().span();
@@ -203,7 +233,13 @@ impl<'p> Checker<'p> {
                     return CallTarget::Error;
                 };
                 let text = token.text();
-                if cx.lookup(text).is_some() || self.lookup_value(cx.file, text).is_some() {
+                let marker = PRIORITY_MARKERS.contains(&text);
+                if marker && self.marker_shadowed(cx, token) {
+                    return CallTarget::Error;
+                }
+                if !marker
+                    && (cx.lookup(text).is_some() || self.lookup_value(cx.file, text).is_some())
+                {
                     let (ty, meaning) = self.expr_kind_name_callee(cx, token, want);
                     let target = match meaning {
                         Meaning::Global(g)
@@ -221,7 +257,8 @@ impl<'p> Checker<'p> {
                     );
                     return target;
                 }
-                if let Some(s) = want.and_then(|w| self.types.as_sum(w))
+                if !marker
+                    && let Some(s) = want.and_then(|w| self.types.as_sum(w))
                     && let Some((index, _)) = self.types.sum(s).variant(text)
                 {
                     return CallTarget::Variant(s, index);
@@ -229,11 +266,12 @@ impl<'p> Checker<'p> {
                 if let Some(b) = builtins::lookup(text) {
                     return CallTarget::Builtin(b);
                 }
-                if let Some(i) = self
-                    .types
-                    .symbols
-                    .iter()
-                    .position(|s| s.constructor == text)
+                if !marker
+                    && let Some(i) = self
+                        .types
+                        .symbols
+                        .iter()
+                        .position(|s| s.constructor == text)
                 {
                     return CallTarget::Constructor(SymbolId::new(i));
                 }
@@ -259,7 +297,11 @@ impl<'p> Checker<'p> {
                 if let Some(s) = want.and_then(|w| self.types.as_sum(w)) {
                     candidates.extend(self.types.sum(s).variants.iter().map(|v| v.name.clone()));
                 }
-                let help = did_you_mean(text, candidates.iter().map(String::as_str));
+                let help = if marker {
+                    Some(format!("`{text}` is reserved for a priority marker"))
+                } else {
+                    did_you_mean(text, candidates.iter().map(String::as_str))
+                };
                 self.error(
                     cx.file,
                     Diagnostic::error("E0302", span, format!("unknown function `{text}`"))

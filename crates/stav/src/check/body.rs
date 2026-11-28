@@ -368,9 +368,7 @@ impl<'p> Checker<'p> {
             "force" => Priority::Force,
             _ => return plain,
         };
-        if cx.lookup(token.text()).is_some() || self.lookup_value(cx.file, token.text()).is_some() {
-            return plain;
-        }
+        self.marker_shadowed(cx, token);
         let args: Vec<ast::Arg<'p>> = call.args().map(|a| a.args().collect()).unwrap_or_default();
         match args.as_slice() {
             [arg] if arg.name().is_none() => match arg.value() {

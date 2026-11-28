@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "a": 1,
+  "b": 3,
+  "profile": "default"
+}

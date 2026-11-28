@@ -48,7 +48,7 @@ The signatures below use type parameters such as `A` and `K` to show how the typ
 | `force<T>(x: T) -> T` | Gives an attribute statement the `force` priority. |
 | `fail<T>(message: Str) -> T` | Stops evaluation with [`E0608`](/reference/error-codes#e0608) and the message. |
 
-`default` and `force` are valid only as the whole right side of an attribute statement, as in `port = default(8080)`. Anywhere else they are [`E0441`](/reference/error-codes#e0441). [Merging rules](/reference/merging) explains what the priorities do.
+`default` and `force` are valid only as the whole right side of an attribute statement, as in `port = default(8080)`. Anywhere else they are [`E0441`](/reference/error-codes#e0441). A call of either bare name is always the marker, even where a binding of that name is in scope, which is [`E0307`](/reference/error-codes#e0307). [Merging rules](/reference/merging) explains what the priorities do.
 
 `fail` has the type its position expects, so it fits in any branch of an `if` or a `match`. Where nothing is expected, its type cannot be inferred ([`E0430`](/reference/error-codes#e0430)). Evaluation stops at the first `fail` it reaches, and the diagnostic shows the calls that led there.
 

@@ -122,6 +122,32 @@ error[E0441]: `default` is a priority marker, valid only as the whole right side
   = help: write `attribute = default(...)`
 ```
 
+A call of the bare name `default` or `force` is always the marker, so no declaration can change how a file merges. The name `exact` is reserved the same way for a marker that is not available yet, so a call `exact(...)` is [`E0302`](/reference/error-codes#e0302). A top-level function or a payload variant with one of these names is [`E0301`](/reference/error-codes#e0301). A `let`, a parameter or an import with one of these names is allowed and stays usable as a value, but calling the bare name while it is in scope is [`E0307`](/reference/error-codes#e0307), because the call would not mean the binding:
+
+<!-- file: marker-binding.stav -->
+
+```stav
+struct Root { port: Int = 80 }
+
+let default = fn(p: Int) = p + 1
+
+port = default(8080)
+```
+
+<!-- run: check marker-binding.stav -->
+
+```text
+error[E0307]: `default` here is the priority marker, but a binding `default` is in scope
+  ┌─ marker-binding.stav:5:8
+  │
+5 │ port = default(8080)
+  │        ^^^^^^^
+  │
+  = help: rename the binding
+```
+
+A nullary variant named `default`, as in `type Profile = default | custom`, stays a variant, because only a call is a marker.
+
 A marker around a struct or map literal applies to every contribution the literal makes. In the next program, `force` wins the field `a`, and the plain contribution still sets `b`, because nothing else contributes to `b` at a higher priority.
 
 <!-- file: marker-literal.stav -->

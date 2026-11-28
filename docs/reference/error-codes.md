@@ -50,12 +50,13 @@ The first digits of a code name the area it belongs to.
 | [E0212](#e0212) | interpolation in an import path or an attribute key |
 | [E0213](#e0213) | an import after another item |
 | [E0214](#e0214) | a declaration in a part file |
-| [E0301](#e0301) | a declaration named like a built-in type |
+| [E0301](#e0301) | a declaration named like a built-in type or a priority marker |
 | [E0302](#e0302) | an unknown name |
 | [E0303](#e0303) | `self` without a field that an enclosing block declares |
 | [E0304](#e0304) | a declaration that the prelude already makes |
 | [E0305](#e0305) | a binding used in its own definition or before it |
 | [E0306](#e0306) | a name, field or key given more than once |
+| [E0307](#e0307) | a call of a priority marker while a binding of that name is in scope |
 | [E0401](#e0401) | a type mismatch |
 | [E0410](#e0410) | a recursive type |
 | [E0411](#e0411) | a type that cannot be a map key or a set element |
@@ -806,7 +807,7 @@ Move the declaration into a library and import it in the part file.
 
 ### E0301
 
-A `struct` or `type` declaration uses the name of a built-in type: `Bool`, `Int`, `Float`, `Str`, `Path`, `Data`, `List`, `Set`, `Map`, `Option`, `Ref`, `Part` or `Fn`.
+A declaration uses a reserved name. Either a `struct` or `type` is named after a built-in type (`Bool`, `Int`, `Float`, `Str`, `Path`, `Data`, `List`, `Set`, `Map`, `Option`, `Ref`, `Part` or `Fn`), or a top-level function or payload variant is named after a priority marker (`default`, `force` or `exact`), which a bare call always means.
 
 <!-- file: e0301.stav -->
 
@@ -826,6 +827,30 @@ error[E0301]: `Path` is the name of a built-in type
   │        ^^^^
   │
   = help: choose another name
+```
+
+The same code covers a function named after a priority marker:
+
+<!-- file: e0301-marker.stav -->
+
+```stav
+struct Root { port: Int = 80 }
+
+fn force(p: Int) -> Int = p
+
+port = force(8080)
+```
+
+<!-- run: check e0301-marker.stav -->
+
+```text
+error[E0301]: `force` is a priority marker
+  ┌─ e0301-marker.stav:3:4
+  │
+3 │ fn force(p: Int) -> Int = p
+  │    ^^^^^
+  │
+  = help: choose another name, because a call of this name is always the marker
 ```
 
 Choose another name.
@@ -971,6 +996,36 @@ error[E0306]: `port` is declared more than once
 ```
 
 Rename or remove one of them.
+
+### E0307
+
+A bare call of a priority marker name, `default`, `force` or `exact`, while a `let`, a parameter or an import of that name is in scope. Such a call is always the marker, so it would not call the binding.
+
+<!-- file: e0307.stav -->
+
+```stav
+struct Root { port: Int = 80 }
+
+fn web(force: Int) -> Part<Root> = part {
+  port = force(force)
+}
+
+include web(8080)
+```
+
+<!-- run: check e0307.stav -->
+
+```text
+error[E0307]: `force` here is the priority marker, but a binding `force` is in scope
+  ┌─ e0307.stav:4:10
+  │
+4 │   port = force(force)
+  │          ^^^^^
+  │
+  = help: rename the binding
+```
+
+Rename the binding. The binding itself stays usable as a value, so only the call has to change.
 
 ## Types
 

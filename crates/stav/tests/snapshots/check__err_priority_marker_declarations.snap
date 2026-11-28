@@ -1,0 +1,20 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0301]: `force` is a priority marker
+  --> app/main.stav:3:4
+  help: choose another name, because a call of this name is always the marker
+error[E0301]: `default` is a priority marker
+  --> app/main.stav:5:4
+  help: choose another name, because a call of this name is always the marker
+error[E0301]: `exact` is a priority marker
+  --> app/main.stav:7:4
+  help: choose another name, because a call of this name is always the marker
+error[E0301]: `force` is a priority marker
+  --> app/main.stav:9:12
+  help: choose another name, because a call of this name is always the marker
+error[E0301]: `force` is a priority marker
+  --> app/lib.stav:1:4
+  help: choose another name, because a call of this name is always the marker

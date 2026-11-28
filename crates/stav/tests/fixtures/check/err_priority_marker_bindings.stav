@@ -1,0 +1,19 @@
+#- file main.stav
+import "./lib.stav" as exact
+
+struct Root { a: Int = 0, b: Int = 0, c: Int = 0, d: Int = 0 }
+
+let force = 3
+
+let default = fn(x: Int) = x * 2
+
+fn part_with(default: Int) -> Part<Root> = part { a = default(5) }
+
+fn sum(force: Int) -> Int = force(1) + 1
+
+a = force(1)
+b = default(5)
+c = exact(1)
+d = 1 + force(2)
+#- file lib.stav
+let x = 1

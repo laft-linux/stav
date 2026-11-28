@@ -1,0 +1,11 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0302]: unknown function `exact`
+  --> app/main.stav:3:5
+  help: `exact` is reserved for a priority marker
+error[E0302]: unknown function `exact`
+  --> app/main.stav:4:9
+  help: `exact` is reserved for a priority marker
