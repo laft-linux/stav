@@ -50,7 +50,7 @@ The first digits of a code name the area it belongs to.
 | [E0212](#e0212) | interpolation in an import path or an attribute key |
 | [E0213](#e0213) | an import after another item |
 | [E0214](#e0214) | a declaration in a part file |
-| [E0301](#e0301) | a declaration named like a built-in type or a priority marker |
+| [E0301](#e0301) | a declaration or variant named like a built-in type or a priority marker |
 | [E0302](#e0302) | an unknown name |
 | [E0303](#e0303) | `self` without a field that an enclosing block declares |
 | [E0304](#e0304) | a declaration that the prelude already makes |
@@ -808,7 +808,7 @@ Move the declaration into a library and import it in the part file.
 
 ### E0301
 
-A declaration uses a reserved name. Either a `struct` or `type` is named after a built-in type (`Bool`, `Int`, `Float`, `Str`, `Path`, `Data`, `List`, `Set`, `Map`, `Option`, `Ref`, `Part` or `Fn`), or a top-level function or payload variant is named after a priority marker (`default`, `force` or `exact`), which a bare call always means.
+A declaration uses a reserved name. Either a `struct`, a `type` or a variant is named after a built-in type (`Bool`, `Int`, `Float`, `Str`, `Path`, `Data`, `List`, `Set`, `Map`, `Option`, `Ref`, `Part` or `Fn`), or a top-level function or payload variant is named after a priority marker (`default`, `force` or `exact`), which a bare call always means. A variant named after a type usually comes from `type T = Int | Str`, which reads as a union of types. Stav has no union types, and a sum with payloads, such as `| int(v: Int) | str(v: Str)`, holds one of several types.
 
 <!-- file: e0301.stav -->
 

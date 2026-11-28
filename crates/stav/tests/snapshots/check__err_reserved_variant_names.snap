@@ -1,0 +1,11 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0301]: the variant `Int` is named like a built-in type
+  --> app/main.stav:1:10
+  help: Stav has no union types, so a sum with payloads, such as `| int(v: Int) | str(v: Str)`, holds one of several types
+error[E0301]: the variant `Str` is named like a built-in type
+  --> app/main.stav:1:16
+  help: Stav has no union types, so a sum with payloads, such as `| int(v: Int) | str(v: Str)`, holds one of several types

@@ -530,6 +530,17 @@ impl<'p> Checker<'p> {
             if variant.params().is_some() {
                 self.check_marker_name(file, &name, span);
             }
+            if BUILTIN_TYPE_NAMES.contains(&name.as_str()) {
+                self.error(
+                    file,
+                    Diagnostic::error(
+                        "E0301",
+                        span,
+                        format!("the variant `{name}` is named like a built-in type"),
+                    )
+                    .with_help("Stav has no union types, so a sum with payloads, such as `| int(v: Int) | str(v: Str)`, holds one of several types"),
+                );
+            }
             let fields = variant.params().map(|params| {
                 let params = self.resolve_params(file, params, owner);
                 for (param, node) in params.iter().zip(

@@ -218,6 +218,7 @@ services:
 ```
 
 - Variant names are unique within one sum type. Different sum types may reuse them.
+- A variant must not be named after a built-in type, such as `Int` or `Str` ([E0301](/reference/error-codes#e0301)). Stav has no union types, so `type T = Int | Str` is refused. A sum with payloads, such as `| int(v: Int) | str(v: Str)`, holds one of several types.
 - A variant without payload is written as a bare name, such as `info`, where a value of its sum type is expected.
 - A variant with payload is constructed with call syntax. Arguments may be positional, in the order of the declaration, or named. Payload fields with defaults may be left out. The call eagerly builds a complete plain value, evaluating omitted defaults like function parameter defaults. Higher merge contributions can replace the resulting fields, but do not suppress any part of a participating call.
 - The qualified forms `Level.info` and `Ready.notify(fd = 3)` work everywhere, and so does `alias.Ready.notify(fd = 3)` for a type imported as `alias`.
