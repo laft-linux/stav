@@ -1,5 +1,6 @@
 //! Checks arbitrary UTF-8 as a program and evaluates it when it checks,
-//! with small limits. Evaluation must never panic and always terminate,
+//! with small limits, whole and with fields of the schema left opaque for
+//! selected attributes. Evaluation must never panic and always terminate,
 //! every diagnostic must point into its file, every value must render,
 //! and evaluating twice must give the same result.
 //!
@@ -13,8 +14,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use stav::{
-    AttrPath, Checked, Evaluated, Format, Host, ImportRoot, Limits, MemoryLoader, RootSpec,
-    SourceSpan, SymbolType,
+    AttrPath, Checked, Evaluated, FieldName, Format, Host, HostValues, ImportRoot, Limits,
+    MemoryLoader, RootSpec, SourceSpan, SymbolType,
 };
 
 const SCHEMA: &str = "type Level = debug | info | warn\n\
@@ -64,8 +65,8 @@ fn points_into_its_file(evaluated: &Evaluated, span: SourceSpan) -> bool {
         .is_some_and(|text| text.get(span.span.range()).is_some())
 }
 
-fn run(checked: &Checked, limits: &Limits) -> String {
-    match checked.eval(limits) {
+fn run(checked: &Checked, limits: &Limits, paths: &[AttrPath]) -> String {
+    match checked.eval_selected(limits, &HostValues::new(), paths) {
         Ok(evaluated) => {
             let mut out = evaluated.to_canonical_json();
             for format in [Format::Json, Format::Toml, Format::Yaml] {
@@ -126,16 +127,38 @@ fn run(checked: &Checked, limits: &Limits) -> String {
 
 fuzz_target!(|input: &str| {
     let host = host(input);
-    let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
-    let Ok(checked) = stav::check(&host, &root) else {
-        return;
-    };
+    let mut root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
     let limits = Limits {
         steps: 200_000,
         value_bytes: 16 * 1024 * 1024,
         string_bytes: 1024 * 1024,
         collection_len: 100_000,
     };
-    let first = run(&checked, &limits);
-    assert_eq!(first, run(&checked, &limits));
+    let whole = [AttrPath::root()];
+    if let Ok(checked) = stav::check(&host, &root) {
+        let first = run(&checked, &limits, &whole);
+        assert_eq!(first, run(&checked, &limits, &whole));
+    }
+    root.opaque = vec![
+        FieldName::new("Item", "tags"),
+        FieldName::new("Root", "opt"),
+    ];
+    let Ok(checked) = stav::check(&host, &root) else {
+        return;
+    };
+    for paths in [
+        &whole[..],
+        &["n".parse().expect("the path parses")],
+        &[
+            "items".parse().expect("the path parses"),
+            "opt".parse().expect("the path parses"),
+        ],
+    ] {
+        let first = run(&checked, &limits, paths);
+        assert_eq!(first, run(&checked, &limits, paths));
+    }
 });

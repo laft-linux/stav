@@ -1,6 +1,7 @@
-//! Checks arbitrary UTF-8 as a program of several files and checks that
-//! checking never panics, that every diagnostic points into its file, and
-//! that checking twice gives the same result.
+//! Checks arbitrary UTF-8 as a program of several files, also with the
+//! fields `Root.a` and `S.x` left opaque, and checks that checking never
+//! panics, that every diagnostic points into its file, and that checking
+//! twice gives the same result.
 //!
 //! The input is split at lines `#-` into the entry file, a file that the
 //! entry may import or include as `./lib.stav`, the module `std/lib` and
@@ -10,7 +11,7 @@
 #![forbid(unsafe_code)]
 
 use libfuzzer_sys::fuzz_target;
-use stav::{Host, HostModule, ImportRoot, MemoryLoader, RootSpec, Source, SymbolType};
+use stav::{FieldName, Host, HostModule, ImportRoot, MemoryLoader, RootSpec, Source, SymbolType};
 
 fn accept(text: &str) -> Result<String, String> {
     Ok(text.to_owned())
@@ -72,7 +73,14 @@ fn run(host: &Host, root: &RootSpec) -> String {
 
 fuzz_target!(|input: &str| {
     let host = host(input);
-    let root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
+    let mut root = RootSpec::new(
+        "Root",
+        vec!["app/main.stav".into()],
+        vec![ImportRoot::new("app")],
+    );
+    let first = run(&host, &root);
+    assert_eq!(first, run(&host, &root));
+    root.opaque = vec![FieldName::new("Root", "a"), FieldName::new("S", "x")];
     let first = run(&host, &root);
     assert_eq!(first, run(&host, &root));
 });
