@@ -1,0 +1,6 @@
+struct Root { mode: Int = 0, ratio: Float = 0.0 }
+
+mode  = 0755
+mode  = 00
+mode  = 0_1
+ratio = 01.5

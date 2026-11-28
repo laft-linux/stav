@@ -1,0 +1,15 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "octal": 493,
+  "octal_padded": 493,
+  "hex": 255,
+  "binary": 5,
+  "zero": 0,
+  "half": 0.5,
+  "zero_float": 0.0,
+  "exponent": 100000.0
+}

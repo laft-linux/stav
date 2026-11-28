@@ -1,0 +1,17 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0106]: number `0755` has a leading zero
+  --> app/main.stav:3:9
+  help: write `0o755` for an octal number, or remove the leading zero
+error[E0106]: number `00` has a leading zero
+  --> app/main.stav:4:9
+  help: remove the leading zero
+error[E0106]: number `0_1` has a leading zero
+  --> app/main.stav:5:9
+  help: write `0o1` for an octal number, or remove the leading zero
+error[E0106]: number `01.5` has a leading zero
+  --> app/main.stav:6:9
+  help: remove the leading zero

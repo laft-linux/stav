@@ -27,6 +27,7 @@ The first digits of a code name the area it belongs to.
 | [E0103](#e0103) | a number directly followed by letters |
 | [E0104](#e0104) | an identifier longer than 255 bytes |
 | [E0105](#e0105) | `@` outside a symbol word |
+| [E0106](#e0106) | a decimal number with a leading zero |
 | [E0107](#e0107) | a number out of range |
 | [E0108](#e0108) | an unterminated string |
 | [E0109](#e0109) | an unknown escape sequence |
@@ -191,6 +192,32 @@ error[E0105]: `@` is only allowed inside a symbol word
 ```
 
 Remove the whitespace. A symbol word is only accepted where the host expects a symbol type, see [E0420](#e0420).
+
+### E0106
+
+A decimal number starts with `0` but is more than the single digit `0`. Many tools read a number such as `0755` as octal, so a file mode written that way would silently be the decimal 755. Stav refuses it instead. The rule covers the whole part of a float too, so `01.5` is refused, while `0.5` and `1e05` are valid.
+
+<!-- file: e0106.stav -->
+
+```stav
+struct Root { mode: Int = 0 }
+
+mode = 0755
+```
+
+<!-- run: check e0106.stav -->
+
+```text
+error[E0106]: number `0755` has a leading zero
+  ┌─ e0106.stav:3:8
+  │
+3 │ mode = 0755
+  │        ^^^^
+  │
+  = help: write `0o755` for an octal number, or remove the leading zero
+```
+
+Write `0o755` for an octal number, or remove the leading zero for a decimal one.
 
 ### E0107
 

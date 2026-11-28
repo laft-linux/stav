@@ -1,0 +1,10 @@
+struct Root {
+  octal:        Int = 0o755
+  octal_padded: Int = 0o0755
+  hex:          Int = 0x00ff
+  binary:       Int = 0b0101
+  zero:         Int = 0
+  half:         Float = 0.5
+  zero_float:   Float = 0e3
+  exponent:     Float = 1e05
+}

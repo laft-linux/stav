@@ -319,7 +319,7 @@ fn at_sign_outside_symbol_word_is_an_error() {
 #[test]
 fn numbers_in_every_notation() {
     assert_snapshot!(
-        render("42 0o755 0x1f 0b1010 1_000_000 0.5 1.0e-3 2_500.25 1E+5 007"),
+        render("42 0o755 0x1f 0b1010 1_000_000 0.5 1.0e-3 2_500.25 1E+5 700"),
         @r#"
     0..2     "42" Int
     2..3     " " Whitespace
@@ -339,7 +339,7 @@ fn numbers_in_every_notation() {
     50..51   " " Whitespace
     51..55   "1E+5" Float
     55..56   " " Whitespace
-    56..59   "007" Int
+    56..59   "700" Int
     59..59   "" Eof
     "#
     );
@@ -409,6 +409,41 @@ fn digit_separators_must_sit_between_digits() {
         assert_eq!(codes(source), ["E0103"], "{source}");
         assert_eq!(lexed.tokens[0].kind, TokenKind::Error, "{source}");
         assert_eq!(lexed.tokens[0].text(source), source);
+    }
+}
+
+#[test]
+fn decimal_numbers_with_a_leading_zero_are_refused() {
+    assert_snapshot!(render("0755 00 0_1 01.5 089 01e3"), @r#"
+    0..4     "0755" Int
+    4..5     " " Whitespace
+    5..7     "00" Int
+    7..8     " " Whitespace
+    8..11    "0_1" Int
+    11..12   " " Whitespace
+    12..16   "01.5" Float
+    16..17   " " Whitespace
+    17..20   "089" Int
+    20..21   " " Whitespace
+    21..25   "01e3" Float
+    25..25   "" Eof
+    error[E0106] 0..4: number `0755` has a leading zero
+      help: write `0o755` for an octal number, or remove the leading zero
+    error[E0106] 5..7: number `00` has a leading zero
+      help: remove the leading zero
+    error[E0106] 8..11: number `0_1` has a leading zero
+      help: write `0o1` for an octal number, or remove the leading zero
+    error[E0106] 12..16: number `01.5` has a leading zero
+      help: remove the leading zero
+    error[E0106] 17..20: number `089` has a leading zero
+      help: remove the leading zero
+    error[E0106] 21..25: number `01e3` has a leading zero
+      help: remove the leading zero
+    "#);
+    for source in [
+        "0", "0.5", "0.05", "0e3", "1e05", "1.05", "10", "0o755", "0o0755", "0x00ff", "0b0101",
+    ] {
+        assert!(codes(source).is_empty(), "{source}");
     }
 }
 

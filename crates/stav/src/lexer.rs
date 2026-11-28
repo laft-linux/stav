@@ -532,6 +532,23 @@ impl<'a> Lexer<'a> {
                 Some("write `_` only between two digits".to_owned()),
             );
         }
+        if radix == 10 && has_leading_zero(text) {
+            self.push(
+                if is_float {
+                    TokenKind::Float
+                } else {
+                    TokenKind::Int
+                },
+                start,
+            );
+            return self.error(
+                "E0106",
+                start,
+                self.pos,
+                format!("number `{text}` has a leading zero"),
+                Some(leading_zero_help(text, is_float)),
+            );
+        }
         if is_float {
             self.push(TokenKind::Float, start);
             if parse_float(text).is_none() {
@@ -1006,6 +1023,21 @@ fn separators_between_digits(text: &str, radix: u32) -> bool {
         .iter()
         .enumerate()
         .all(|(i, &b)| b != b'_' || (i > 0 && digit_at(i - 1) && digit_at(i + 1)))
+}
+
+/// Returns whether the integer part of a decimal literal is more than the
+/// single digit `0` and starts with `0`.
+fn has_leading_zero(text: &str) -> bool {
+    let whole = text.split(['.', 'e', 'E']).next().unwrap_or_default();
+    whole.len() > 1 && whole.starts_with('0')
+}
+
+fn leading_zero_help(text: &str, is_float: bool) -> String {
+    let digits = text.trim_start_matches(['0', '_']);
+    if is_float || digits.is_empty() || !digits.bytes().all(|b| is_digit_in(b, 8) || b == b'_') {
+        return "remove the leading zero".to_owned();
+    }
+    format!("write `0o{digits}` for an octal number, or remove the leading zero")
 }
 
 fn is_path_char(b: u8) -> bool {

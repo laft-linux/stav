@@ -242,10 +242,12 @@ error[E0420]: the symbol word `llvm@19` is only valid where a symbol type is exp
 ## Numbers
 
 ```text
-INT   = dec | "0x" hex { hex | "_" } | "0o" oct { oct | "_" } | "0b" bin { bin | "_" }
-dec   = digit { digit | "_" }
-FLOAT = dec "." dec [ exp ] | dec exp
-exp   = ( "e" | "E" ) [ "+" | "-" ] dec
+INT     = dec_int | "0x" hex { hex | "_" } | "0o" oct { oct | "_" } | "0b" bin { bin | "_" }
+dec_int = "0" | nonzero { digit | "_" }
+nonzero = "1"..."9"
+digits  = digit { digit | "_" }
+FLOAT   = dec_int "." digits [ exp ] | dec_int exp
+exp     = ( "e" | "E" ) [ "+" | "-" ] digits
 ```
 
 - `Int` values are signed 64-bit integers. A literal that does not fit is [E0107](/reference/error-codes#e0107).
@@ -253,6 +255,7 @@ exp   = ( "e" | "E" ) [ "+" | "-" ] dec
 - `_` separates digit groups and is ignored.
 - There are no negative literals. `-1` is the unary minus applied to `1`.
 - A number followed directly by letters, as in `0ad`, is [E0103](/reference/error-codes#e0103).
+- A decimal integer, and the whole part of a float, starts with `0` only when it is the single digit `0`. So `0`, `0.5` and `1e05` are valid, while `0755`, `00` and `01.5` are [E0106](/reference/error-codes#e0106). Many tools read `0755` as an octal number, so Stav refuses it instead of silently reading the decimal 755. Write `0o755` for the octal number. The digits after a radix prefix may start with `0`, as in `0o0755` and `0x00ff`.
 
 <!-- file: numbers.stav -->
 
