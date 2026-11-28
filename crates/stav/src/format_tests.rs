@@ -814,3 +814,11 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_sum_with_one_variant_keeps_its_leading_bar() {
+    assert_eq!(fmt("type Color = | Red\n"), "type Color = | Red\n");
+    assert_eq!(fmt("type Color =   |   red\n"), "type Color = | red\n");
+    assert_eq!(fmt("type L = | a | b\n"), "type L = a | b\n");
+    assert_eq!(fmt("type L = a\n"), "type L = a\n");
+}
