@@ -1,0 +1,23 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+file 0 app/main.stav (entry)
+entries 0
+root Root
+bodies unit 0
+unit 0 app/main.stav
+  18:1 block item "x" (clause items) -> Item
+--- warnings
+warning[W0101]: this doc comment documents nothing
+  --> app/main.stav:2:3
+  help: put it directly above a declaration, field or variant, or write `#` for an ordinary comment
+warning[W0101]: this doc comment documents nothing
+  --> app/main.stav:5:3
+  help: put it directly above a declaration, field or variant, or write `#` for an ordinary comment
+warning[W0101]: this doc comment documents nothing
+  --> app/main.stav:17:1
+  help: put it directly above a declaration, field or variant, or write `#` for an ordinary comment
+warning[W0101]: this doc comment documents nothing
+  --> app/main.stav:20:1
+  help: put it directly above a declaration, field or variant, or write `#` for an ordinary comment

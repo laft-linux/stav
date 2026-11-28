@@ -16,38 +16,126 @@ use crate::token::TokenKind;
 /// Returns the doc comment directly before `node`, without the `##`
 /// markers and their one leading space, with the lines joined by `\n`.
 ///
-/// The doc comments are the `##` tokens between the previous declaration
-/// or field and `node`, so a blank line or an ordinary comment between
-/// them leaves `node` without a doc comment.
+/// The doc comment is the block of consecutive `##` lines directly before
+/// `node`. A blank line or any other comment between the block and `node`
+/// leaves `node` without a doc comment.
 pub fn doc_comment(node: SyntaxNode<'_>) -> Option<String> {
-    let parent = node.parent()?;
-    let mut lines: Vec<&str> = Vec::new();
-    for element in parent.children_with_tokens() {
-        match element {
-            SyntaxElement::Node(child) if child.index() == node.index() => break,
-            SyntaxElement::Token(token) if token.kind() == TokenKind::DocComment => {
-                lines.push(token.text());
-            }
-            SyntaxElement::Token(token)
-                if matches!(
-                    token.kind(),
-                    TokenKind::Newline | TokenKind::Whitespace | TokenKind::Pipe
-                ) => {}
-            _ => lines.clear(),
-        }
-    }
+    let lines = doc_tokens(node);
     if lines.is_empty() {
         return None;
     }
     let text: Vec<&str> = lines
         .iter()
         .map(|line| {
-            let line = line.trim_end();
+            let line = line.text().trim_end();
             let line = line.strip_prefix("##").unwrap_or(line);
             line.strip_prefix(' ').unwrap_or(line)
         })
         .collect();
     Some(text.join("\n"))
+}
+
+/// Returns the `##` tokens of the doc block that attaches to `node`.
+fn doc_tokens(node: SyntaxNode<'_>) -> Vec<SyntaxToken<'_>> {
+    let Some(parent) = node.parent() else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    let mut line_feeds = 0;
+    for element in parent.children_with_tokens() {
+        match element {
+            SyntaxElement::Node(child) if child.index() == node.index() => return lines,
+            SyntaxElement::Token(token) if token.kind() == TokenKind::DocComment => {
+                lines.push(token);
+                line_feeds = 0;
+            }
+            SyntaxElement::Token(token) if token.kind() == TokenKind::Newline => {
+                line_feeds += 1;
+                if line_feeds > 1 {
+                    lines.clear();
+                }
+            }
+            SyntaxElement::Token(token)
+                if matches!(token.kind(), TokenKind::Whitespace | TokenKind::Pipe) => {}
+            _ => {
+                lines.clear();
+                line_feeds = 0;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Returns a warning for every doc block that attaches to no declaration,
+/// field or variant.
+fn dangling_doc_blocks(file: SourceFile<'_>) -> Vec<Diagnostic> {
+    let mut attached = std::collections::BTreeSet::new();
+    let mut attach = |node: SyntaxNode<'_>| {
+        attached.extend(doc_tokens(node).iter().map(|t| t.span().start));
+    };
+    for item in file.items() {
+        match item {
+            Item::Struct(decl) => {
+                attach(decl.syntax());
+                for field in decl.fields() {
+                    attach(field.syntax());
+                }
+            }
+            Item::Type(decl) => {
+                attach(decl.syntax());
+                for variant in decl.variants() {
+                    attach(variant.syntax());
+                }
+            }
+            Item::Fn(decl) => attach(decl.syntax()),
+            Item::Stmt(Stmt::Let(decl)) => attach(decl.syntax()),
+            Item::Import(_) | Item::Stmt(_) => {}
+        }
+    }
+    let mut diagnostics = Vec::new();
+    let mut block: Option<Span> = None;
+    let mut line_feeds = 0;
+    let mut stack = vec![SyntaxElement::Node(file.0)];
+    let end_block = |block: &mut Option<Span>, diagnostics: &mut Vec<Diagnostic>| {
+        if let Some(span) = block.take() {
+            diagnostics.push(
+                Diagnostic::warning("W0101", span, "this doc comment documents nothing").with_help(
+                    "put it directly above a declaration, field or variant, or write `#` for an ordinary comment",
+                ),
+            );
+        }
+    };
+    while let Some(element) = stack.pop() {
+        let token = match element {
+            SyntaxElement::Node(node) => {
+                let children: Vec<_> = node.children_with_tokens().collect();
+                stack.extend(children.into_iter().rev());
+                continue;
+            }
+            SyntaxElement::Token(token) => token,
+        };
+        match token.kind() {
+            TokenKind::DocComment if !attached.contains(&token.span().start) => {
+                if line_feeds > 1 {
+                    end_block(&mut block, &mut diagnostics);
+                }
+                line_feeds = 0;
+                let span = token.span();
+                block = Some(block.map_or(span, |b| Span {
+                    start: b.start,
+                    end: span.end,
+                }));
+            }
+            TokenKind::Newline => line_feeds += 1,
+            TokenKind::Whitespace => {}
+            _ => {
+                end_block(&mut block, &mut diagnostics);
+                line_feeds = 0;
+            }
+        }
+    }
+    end_block(&mut block, &mut diagnostics);
+    diagnostics
 }
 
 trait AstNode<'a>: Sized {
@@ -232,10 +320,13 @@ impl<'a> SourceFile<'a> {
     }
 
     /// Checks that the file contains only the items a file of `kind` may
-    /// contain, and returns an error for each item that does not belong.
+    /// contain, and returns an error for each item that does not belong,
+    /// followed by a warning for each doc comment that documents nothing.
     ///
     /// A library cannot contain statements other than `let` (`E0209`), and
-    /// a part file cannot declare a `struct`, `type` or `fn` (`E0214`).
+    /// a part file cannot declare a `struct`, `type` or `fn` (`E0214`). A
+    /// doc block that no declaration, field or variant follows directly is
+    /// `W0101`.
     pub fn validate(self, kind: FileKind) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         for item in self.items() {
@@ -262,6 +353,7 @@ impl<'a> SourceFile<'a> {
                 _ => {}
             }
         }
+        diagnostics.extend(dangling_doc_blocks(self));
         diagnostics
     }
 }

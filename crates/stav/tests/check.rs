@@ -945,3 +945,24 @@ fn field_defaults_never_resolve_fields_from_enclosing_instances() {
         assert_eq!(error.span.range(), start..start + 1, "{diagnostics}");
     }
 }
+
+#[test]
+fn doc_comments_attach_only_directly_before_their_item() {
+    let source = "struct Root {\n  ## Blank.\n\n  a: Int = 0\n  ## Comment.\n  # plain\n  b: Int = 0\n  \
+                  ## Attached.\n  c: Int = 0\n}\n";
+    let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
+    let checked = check(&host, &app_root()).expect("the program checks");
+    let schema = checked.schema();
+    let docs: Vec<(&str, Option<&str>)> = schema.structs[0]
+        .fields
+        .iter()
+        .map(|f| (f.name.as_str(), f.doc.as_deref()))
+        .collect();
+    assert_eq!(docs, [("a", None), ("b", None), ("c", Some("Attached."))]);
+    let codes: Vec<&str> = checked
+        .warnings()
+        .iter()
+        .map(|w| w.diagnostic.code)
+        .collect();
+    assert_eq!(codes, ["W0101", "W0101"]);
+}

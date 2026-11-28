@@ -261,11 +261,12 @@ pub fn check(host: &Host, root: &RootSpec) -> Result<Checked, Diagnostics> {
     {
         return Err(diagnostics(&program, found));
     }
-    let (found, parts) = {
+    let (checked, parts) = {
         let mut checker = Checker::new(&program, host);
         checker.run(root);
         checker.finish()
     };
+    found.extend(checked);
     match parts {
         Some(parts) => {
             let warnings = diagnostics(&program, found);

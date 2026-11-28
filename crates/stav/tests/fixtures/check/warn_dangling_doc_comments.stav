@@ -1,0 +1,20 @@
+struct Root {
+  ## Separated by a blank line.
+
+  a: Int = 0
+  ## Separated by a comment.
+  # An ordinary comment.
+  b: Int = 0
+  ## Attached.
+  c: Int = 0
+  ### An ordinary comment.
+  d: Int = 0
+  items: Map<Str, Item> = {} block item
+}
+
+struct Item { n: Int = 0 }
+
+## Before a block statement.
+item x { }
+
+## At the end of the file.

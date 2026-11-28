@@ -28,7 +28,7 @@ A `#` outside a string starts a comment that runs to the end of the line.
 let port = 8080 # Trailing comments are fine too.
 ```
 
-A comment that starts with `##` followed by a space or the end of the line is a doc comment. Consecutive doc comment lines form one block, which documents the declaration, field or variant that follows it. Doc comments are Markdown. Tools such as a language server or a host program can show them next to the item they describe.
+A comment that starts with `##` followed by a space or the end of the line is a doc comment. Consecutive doc comment lines form one block, which documents the `struct`, `type`, `fn`, top-level `let`, field or variant that directly follows it. Only `##` lines may stand between the block and its item. A blank line or any other comment, including one that starts with `###`, ends the block. A block that documents nothing, because it ends before its item or stands before something else such as a statement or the end of the file, is warning [W0101](/reference/error-codes#w0101). Doc comments are Markdown. Tools such as a language server or a host program can show them next to the item they describe.
 
 ```stav
 ## A web upstream.

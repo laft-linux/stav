@@ -116,6 +116,7 @@ The first digits of a code name the area it belongs to.
 | [E0803](#e0803) | a value that violates a refinement |
 | [E0804](#e0804) | a value that cannot be rendered in the requested format |
 | [E0805](#e0805) | an attribute that does not exist or does not convert |
+| [W0101](#w0101) | a doc comment that documents nothing |
 | [W0302](#w0302) | a binding that hides a variant |
 | [W0434](#w0434) | a `match` arm that can never match |
 | [W0607](#w0607) | a provisional cycle of `self` dependencies inside one body |
@@ -2627,6 +2628,34 @@ Fix the path. In a host, make the Rust type match the shape of the value.
 ## Warnings
 
 Warnings do not stop checking or evaluation. `stav check` and `stav eval` print them and still succeed.
+
+### W0101
+
+A doc comment, a block of `##` lines, documents nothing. A doc block documents the declaration, field or variant directly after it, and a blank line or an ordinary comment between them ends the block. A doc block before a statement, an import or the end of the file documents nothing either.
+
+<!-- file: w0101.stav -->
+
+```stav
+struct Root {
+  ## The port to listen on.
+
+  port: Int = 80
+}
+```
+
+<!-- run: check w0101.stav -->
+
+```text
+warning[W0101]: this doc comment documents nothing
+  ┌─ w0101.stav:2:3
+  │
+2 │   ## The port to listen on.
+  │   ^^^^^^^^^^^^^^^^^^^^^^^^^
+  │
+  = help: put it directly above a declaration, field or variant, or write `#` for an ordinary comment
+```
+
+Remove the blank line or the comment between the block and its item, or write the block with `#` when it is an ordinary comment.
 
 ### W0302
 
