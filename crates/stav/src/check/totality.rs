@@ -7,7 +7,7 @@ use super::Checker;
 use super::decls::GlobalKind;
 use super::graph;
 use super::load::FileId;
-use super::types::{GlobalId, StructId, SumId};
+use super::types::{AliasId, GlobalId, StructId, SumId};
 use crate::diagnostic::Diagnostic;
 use crate::span::Span;
 
@@ -22,6 +22,8 @@ pub(crate) enum Node {
     /// The payload defaults of a sum type, evaluated when a variant is
     /// built.
     SumDefaults(SumId),
+    /// The refinements of a type alias, checked wherever the alias is used.
+    Alias(AliasId),
 }
 
 /// The edges of the call graph, each with the place of its first
@@ -41,21 +43,26 @@ impl CallGraph {
 impl Checker<'_> {
     fn node_index(&self, node: Node) -> usize {
         let (globals, structs) = (self.globals.len(), self.types.structs.len());
+        let sums = self.types.sums.len();
         match node {
             Node::Global(g) => g.index(),
             Node::StructDefaults(s) => globals + s.index(),
             Node::SumDefaults(s) => globals + structs + s.index(),
+            Node::Alias(a) => globals + structs + sums + a.index(),
         }
     }
 
     fn index_node(&self, index: usize) -> Node {
         let (globals, structs) = (self.globals.len(), self.types.structs.len());
+        let sums = self.types.sums.len();
         if index < globals {
             Node::Global(GlobalId::new(index))
         } else if index < globals + structs {
             Node::StructDefaults(StructId::new(index - globals))
-        } else {
+        } else if index < globals + structs + sums {
             Node::SumDefaults(SumId::new(index - globals - structs))
+        } else {
+            Node::Alias(AliasId::new(index - globals - structs - sums))
         }
     }
 
@@ -66,13 +73,17 @@ impl Checker<'_> {
                 format!("the defaults of `{}`", self.types.structure(s).name)
             }
             Node::SumDefaults(s) => format!("the defaults of `{}`", self.types.sum(s).name),
+            Node::Alias(a) => format!("the refinements of `{}`", self.aliases[a.index()].name),
         }
     }
 
     /// Reports cycles of the call graph and orders the top-level `let`
     /// declarations so that each comes after everything it uses.
     pub(super) fn check_totality(&mut self) {
-        let total = self.globals.len() + self.types.structs.len() + self.types.sums.len();
+        let total = self.globals.len()
+            + self.types.structs.len()
+            + self.types.sums.len()
+            + self.aliases.len();
         let mut adj = vec![Vec::new(); total];
         for &(from, to) in self.calls.edges.keys() {
             adj[self.node_index(from)].push(self.node_index(to));

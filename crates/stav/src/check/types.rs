@@ -52,6 +52,10 @@ id!(
     /// A top-level function or `let` of a file.
     GlobalId
 );
+id!(
+    /// A type alias.
+    AliasId
+);
 
 /// A type. Types are interned, so equal types have equal [`TypeId`]s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

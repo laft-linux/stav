@@ -194,7 +194,7 @@ Struct types are nominal. Two structs with the same fields are still different t
 
 ## Sum types and `match`
 
-A `type` declares a sum type: a value that is exactly one of its variants. A variant is either a bare name or carries named payload fields.
+A `type` declares a sum type: a value that is exactly one of its variants. A variant is either a bare name or carries named payload fields. When its right side is another type instead, as in `type Port = Int where 1..=65535`, it declares an [alias](/reference/types#type-aliases), another name for that type.
 
 <!-- file: sums.stav -->
 

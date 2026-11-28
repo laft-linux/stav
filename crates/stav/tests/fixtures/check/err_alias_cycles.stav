@@ -1,0 +1,7 @@
+type A = List<A>
+
+type B = C
+
+type C = B
+
+struct Root { a: Int = 0 }

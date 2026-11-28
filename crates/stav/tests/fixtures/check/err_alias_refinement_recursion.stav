@@ -1,0 +1,5 @@
+type Small = Int where small
+
+fn small(x: Small) -> Bool = x < 10
+
+struct Root { a: Small = 1 }

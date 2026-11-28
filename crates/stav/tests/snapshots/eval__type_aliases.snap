@@ -1,0 +1,19 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "p": 80,
+  "q": 1080,
+  "s": {
+    "a": 1
+  },
+  "l": "info",
+  "name": "debug",
+  "loader": "limine",
+  "color": "Red",
+  "pair": "Green",
+  "same": true,
+  "ok": true
+}

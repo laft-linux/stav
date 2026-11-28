@@ -61,11 +61,15 @@ pub struct Checked {
     pub(crate) implicit_parts: Vec<UnitId>,
     pub(crate) let_order: Vec<types::GlobalId>,
     calls: CallGraph,
+    /// The names of the type aliases, which the call graph refers to.
+    alias_names: Vec<String>,
     pub(crate) ref_targets: BTreeMap<StructId, Vec<model::Step>>,
     warnings: Diagnostics,
     inputs: BTreeMap<PathBuf, FileId>,
     pub(crate) symbols: Vec<SymbolType>,
-    pub(crate) implicit_refs: Vec<ImplicitRefs>,
+    /// The implicit references of the host, each with the structs its
+    /// target names.
+    pub(crate) implicit_refs: Vec<(Vec<StructId>, ImplicitRefs)>,
     pub(crate) import_roots: Vec<ImportRoot>,
     /// The import paths of the host modules.
     pub(crate) host_modules: Vec<String>,
@@ -279,11 +283,16 @@ pub fn check(host: &Host, root: &RootSpec) -> Result<Checked, Diagnostics> {
                 implicit_parts: parts.implicit_parts,
                 let_order: parts.let_order,
                 calls: parts.calls,
+                alias_names: parts.alias_names,
                 ref_targets: parts.ref_targets,
                 warnings,
                 inputs,
                 symbols: host.symbols.clone(),
-                implicit_refs: host.implicit_refs.clone(),
+                implicit_refs: parts
+                    .implicit_targets
+                    .into_iter()
+                    .zip(host.implicit_refs.iter().cloned())
+                    .collect(),
                 import_roots: root.import_roots.clone(),
                 host_modules: host.host_modules.iter().map(|m| m.path.clone()).collect(),
             })
@@ -303,6 +312,8 @@ struct Parts {
     let_order: Vec<types::GlobalId>,
     calls: CallGraph,
     ref_targets: BTreeMap<StructId, Vec<model::Step>>,
+    implicit_targets: Vec<Vec<StructId>>,
+    alias_names: Vec<String>,
 }
 
 fn diagnostics(program: &Program, items: Vec<FileDiagnostic>) -> Diagnostics {
@@ -475,6 +486,7 @@ struct Checker<'p> {
     /// The paths of the target maps of every struct, once the declared
     /// types are known.
     target_maps: Option<BTreeMap<StructId, Vec<Vec<model::Step>>>>,
+    aliases: Vec<decls::Alias<'p>>,
     pending_predicates: Vec<decls::PendingPredicate<'p>>,
     predicate_args: Vec<decls::PredicateArgs<'p>>,
     /// The part file units created but not checked yet, with the file and
@@ -508,6 +520,7 @@ impl<'p> Checker<'p> {
             ref_targets: BTreeMap::new(),
             ref_uses: Vec::new(),
             target_maps: None,
+            aliases: Vec::new(),
             pending_predicates: Vec::new(),
             predicate_args: Vec::new(),
             parts: Vec::new(),
@@ -539,6 +552,33 @@ impl<'p> Checker<'p> {
 
     /// Returns the diagnostics, and what the evaluator needs when none of
     /// them is an error.
+    /// Returns the structs that the target of each implicit reference
+    /// names: the structs of that name, and the structs that aliases of
+    /// that name stand for.
+    fn implicit_targets(&self) -> Vec<Vec<StructId>> {
+        self.host
+            .implicit_refs
+            .iter()
+            .map(|implicit| {
+                let mut found: Vec<StructId> = (0..self.types.structs.len())
+                    .map(StructId::new)
+                    .filter(|&s| self.types.structure(s).name == implicit.target)
+                    .collect();
+                for (i, alias) in self.aliases.iter().enumerate() {
+                    if alias.name == implicit.target
+                        && let decls::TypeItem::Struct(s) =
+                            self.expand_alias(decls::TypeItem::Alias(types::AliasId::new(i)))
+                    {
+                        found.push(s);
+                    }
+                }
+                found.sort_unstable();
+                found.dedup();
+                found
+            })
+            .collect()
+    }
+
     fn finish(mut self) -> (Vec<FileDiagnostic>, Option<Parts>) {
         self.diagnostics
             .sort_by_key(|d| (d.file, d.diagnostic.span.start, d.diagnostic.span.end));
@@ -546,6 +586,8 @@ impl<'p> Checker<'p> {
             .diagnostics
             .iter()
             .any(|d| d.diagnostic.severity == Severity::Error);
+        let implicit_targets = self.implicit_targets();
+        let alias_names = self.aliases.iter().map(|a| a.name.clone()).collect();
         let parts = match self.root {
             Some(root) if !errors => Some(Parts {
                 types: self.types,
@@ -556,6 +598,8 @@ impl<'p> Checker<'p> {
                 implicit_parts: self.implicit_parts,
                 let_order: self.let_order,
                 calls: self.calls,
+                implicit_targets,
+                alias_names,
                 ref_targets: self.ref_targets,
             }),
             _ => None,

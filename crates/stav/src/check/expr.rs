@@ -1195,7 +1195,8 @@ impl<'p> Checker<'p> {
                 _ => None,
             },
             _ => None,
-        };
+        }
+        .map(|item| self.expand_alias(item));
         if found.is_none() {
             let name = segments.last().map_or("", |t| t.text());
             let candidates: Vec<String> = self.scopes[cx.file.index()]
@@ -1228,7 +1229,9 @@ impl<'p> Checker<'p> {
                 match self.lookup_value(cx.file, text) {
                     Some(ValueItem::Module(m)) => Some(PathItem::Module(m)),
                     Some(ValueItem::Global(_)) => None,
-                    None => self.lookup_type(cx.file, text).map(PathItem::Type),
+                    None => self
+                        .lookup_type(cx.file, text)
+                        .map(|item| PathItem::Type(self.expand_alias(item))),
                 }
             }
             Expr::Field(field) if !field.is_optional() => {
@@ -1242,8 +1245,8 @@ impl<'p> Checker<'p> {
                         if let Some(ValueItem::Global(g)) = scope.values.get(text) {
                             return Some(PathItem::Value(*g));
                         }
-                        if let Some(t) = scope.types.get(text) {
-                            return Some(PathItem::Type(*t));
+                        if let Some(&t) = scope.types.get(text) {
+                            return Some(PathItem::Type(self.expand_alias(t)));
                         }
                         let candidates: Vec<String> = scope
                             .values

@@ -1,3 +1,5 @@
 type T = Int | Str
 
+type F = Fn(x: Int)
+
 struct Root { t: T = Int }

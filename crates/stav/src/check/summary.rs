@@ -149,6 +149,7 @@ impl Checked {
             Node::Global(g) => self.globals[g.index()].name.clone(),
             Node::StructDefaults(s) => format!("{} defaults", self.types.structure(s).name),
             Node::SumDefaults(s) => format!("{} defaults", self.types.sum(s).name),
+            Node::Alias(a) => format!("{} refinements", self.alias_names[a.index()]),
         }
     }
 

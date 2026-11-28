@@ -1056,7 +1056,7 @@ Give a value of the expected type. Stav never converts implicitly between `Int` 
 
 ### E0410
 
-A type contains itself, directly or through lists, sets, maps, options or variant payloads. Every value is a finite tree, so types cannot be recursive.
+A type contains itself, directly or through lists, sets, maps, options or variant payloads. Every value is a finite tree, so types cannot be recursive. The same code covers a type alias that refers to itself, directly or through other aliases, as in `type A = List<A>`.
 
 <!-- file: e0410.stav -->
 

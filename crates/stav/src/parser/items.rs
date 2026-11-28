@@ -179,16 +179,56 @@ impl Parser<'_> {
         self.start_node(NodeKind::TypeDecl);
         self.bump();
         self.type_name_decl();
-        if self.eat(T::Eq) {
+        if !self.eat(T::Eq) {
+            self.expected("`=`");
+        } else if self.at_aliased_type() {
+            self.type_();
+        } else {
             self.eat(T::Pipe);
             self.variant();
             while self.eat(T::Pipe) {
                 self.variant();
             }
-        } else {
-            self.expected("`=`");
         }
         self.finish_node();
+    }
+
+    /// Returns whether the right side of a `type` declaration is a type,
+    /// which makes the declaration an alias. A type starts with a type name
+    /// or with an import alias and a dot, and is never followed by `|`. A
+    /// type name with parentheses is a payload variant, unless it is `Fn`
+    /// and `->` follows the parentheses.
+    fn at_aliased_type(&self) -> bool {
+        match (self.current(), self.nth(1)) {
+            (T::Ident, T::Dot) => true,
+            (T::TypeIdent, T::Pipe) => false,
+            (T::TypeIdent, T::LParen) => self.current_text() == "Fn" && self.arrow_after_parens(),
+            (T::TypeIdent, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns whether `->` follows the parentheses that open at the next
+    /// token but one.
+    fn arrow_after_parens(&self) -> bool {
+        let mut index = self.nth_index(1);
+        let mut depth = 0usize;
+        while index < self.limit {
+            match self.tokens[index].kind {
+                T::LParen => depth += 1,
+                T::RParen => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let next = self.next_index(index + 1);
+                        return next < self.limit && self.tokens[next].kind == T::Arrow;
+                    }
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            index = self.next_index(index + 1);
+        }
+        false
     }
 
     fn variant(&mut self) {

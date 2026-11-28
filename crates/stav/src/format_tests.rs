@@ -822,3 +822,17 @@ fn a_sum_with_one_variant_keeps_its_leading_bar() {
     assert_eq!(fmt("type L = | a | b\n"), "type L = a | b\n");
     assert_eq!(fmt("type L = a\n"), "type L = a\n");
 }
+
+#[test]
+fn aliases_stay_on_one_line() {
+    assert_eq!(
+        fmt("type Port=Int where 1..=65535\n"),
+        "type Port = Int where 1..=65535\n"
+    );
+    assert_eq!(fmt("type Cfg = m.Config\n"), "type Cfg = m.Config\n");
+    assert_eq!(
+        fmt("type Handler =  Fn( Str )->Bool\n"),
+        "type Handler = Fn(Str) -> Bool\n"
+    );
+    assert_eq!(fmt("type Color = Red\n"), "type Color = Red\n");
+}

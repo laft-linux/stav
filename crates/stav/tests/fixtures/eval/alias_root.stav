@@ -1,0 +1,8 @@
+#- file main.stav
+import "./schema.stav" as m
+
+type Root = m.Config
+
+port = 8080
+#- file schema.stav
+struct Config { port: Int = 80, name: Str = "app" }

@@ -224,6 +224,69 @@ services:
 - The qualified forms `Level.info` and `Ready.notify(fd = 3)` work everywhere, and so does `alias.Ready.notify(fd = 3)` for a type imported as `alias`.
 - A variant without payload renders as its name. A variant with payload renders as a map from the variant name to its payload fields.
 
+## Type aliases
+
+A `type` declaration whose right side is a type, rather than a list of variants, declares an alias. An alias is another name for the type it names, so the two are the same type everywhere. It declares no new type, and two aliases of one type are the same type too.
+
+<!-- file: aliases.stav -->
+
+```stav
+type Port = Int where 1..=65535
+
+type Level = debug | info | warn
+
+type Verbosity = Level
+
+type Loader = limine
+
+type Color = | Red
+
+struct Root {
+  listen: Port = 8080
+  admin:  Port where 1024.. = 9000
+  level:  Verbosity = Verbosity.warn
+  loader: Loader = limine
+  color:  Color = Red
+}
+```
+
+<!-- run: eval aliases.stav -->
+
+```json
+{
+  "listen": 8080,
+  "admin": 9000,
+  "level": "warn",
+  "loader": "limine",
+  "color": "Red"
+}
+```
+
+- An alias can be written wherever a type name can: in field, parameter, return and `let` types, in type arguments, and as `alias.Name` from an import. An alias of a struct also writes struct values, as in `Cfg { a = 1 }`, and names the root struct, so `type Root = schema.Config` makes an imported struct the root. An alias of a sum type writes its variants, as in `Verbosity.warn`, in expressions and in patterns.
+- A refinement in the aliased type belongs to the alias, and a use may add more. `Port where 1024..` must satisfy both `1..=65535` and `1024..`. The predicates of the alias are evaluated where the alias is declared.
+- An alias cannot refer to itself, directly or through other aliases ([E0410](/reference/error-codes#e0410)), and it takes no type parameters.
+- The right side is an alias when it is a type, and a sum otherwise. A bare lowercase name, as in `type Loader = limine`, is a sum with one variant, and `type T = A | B` is a sum of two variants. A bare type name, as in `type Color = Red`, is an alias, so a sum with one variant whose name could be a type is written with a leading `|`, as in `type Color = | Red`. When no type has that name, the error says so:
+
+<!-- file: alias-sum.stav -->
+
+```stav
+type Color = Red
+
+struct Root { color: Color }
+```
+
+<!-- run: check alias-sum.stav -->
+
+```text
+error[E0302]: unknown type `Red`
+  ┌─ alias-sum.stav:1:14
+  │
+1 │ type Color = Red
+  │              ^^^
+  │
+  = help: write `type Color = | Red` to declare a sum with one variant `Red`
+```
+
 ## Options
 
 `Option<T>` holds either `none` or a value of `T`. A value of `T` fits wherever an `Option<T>` is expected and is wrapped implicitly, so there is no constructor for the present case. An `Option` of an `Option` is [E0413](/reference/error-codes#e0413).

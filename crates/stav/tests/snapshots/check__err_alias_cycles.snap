@@ -1,0 +1,11 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0410]: `A` refers to itself
+  --> app/main.stav:1:15
+  help: an alias names another type, so it cannot contain itself
+error[E0410]: `B` refers to itself
+  --> app/main.stav:5:10
+  help: an alias names another type, so it cannot contain itself

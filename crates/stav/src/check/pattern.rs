@@ -439,7 +439,8 @@ impl<'p> Checker<'p> {
                 _ => None,
             },
             _ => None,
-        };
+        }
+        .map(|item| self.expand_alias(item));
         let Some(TypeItem::Sum(s)) = item else {
             let path: Vec<&str> = type_segments.iter().map(|t| t.text()).collect();
             self.error(

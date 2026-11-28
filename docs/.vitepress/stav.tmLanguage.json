@@ -275,7 +275,7 @@
       "patterns": [
         {
           "name": "keyword.other.priority.stav",
-          "match": "\\b(default|force)\\b(?=\\()"
+          "match": "\\b(default|force|exact)\\b(?=\\()"
         },
         {
           "name": "support.function.builtin.stav",

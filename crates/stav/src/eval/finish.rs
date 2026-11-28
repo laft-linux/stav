@@ -311,9 +311,8 @@ impl<'c> Eval<'c> {
                 labels.extend(map.entries.iter().map(|(k, _)| k.text(&self.c.types)));
             }
         }
-        let name = &self.c.types.structure(target).name;
-        for implicit in &self.c.implicit_refs {
-            if &implicit.target == name {
+        for (targets, implicit) in &self.c.implicit_refs {
+            if targets.contains(&target) {
                 labels.extend((implicit.labels)(public));
             }
         }

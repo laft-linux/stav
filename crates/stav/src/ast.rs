@@ -345,7 +345,8 @@ impl<'a> Field<'a> {
 }
 
 node! {
-    /// `type Name = variant | variant`.
+    /// `type Name = variant | variant`, a sum type, or `type Name = Type`,
+    /// an alias.
     TypeDecl = TypeDecl
 }
 
@@ -355,9 +356,16 @@ impl<'a> TypeDecl<'a> {
         names(self.0).next()
     }
 
-    /// Returns the variants in declaration order.
+    /// Returns the variants of a sum type in declaration order. An alias
+    /// has none.
     pub fn variants(self) -> impl Iterator<Item = Variant<'a>> {
         children(self.0)
+    }
+
+    /// Returns the type that an alias such as `type Port = Int` names, or
+    /// `None` for a sum type.
+    pub fn aliased(self) -> Option<Type<'a>> {
+        child(self.0)
     }
 }
 

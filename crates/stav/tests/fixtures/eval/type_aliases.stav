@@ -1,0 +1,41 @@
+type Port = Int where 1..=65535
+
+type Handler = Fn(Str) -> Bool
+
+type Level = debug | info
+
+type L2 = Level
+
+type L3 = L2
+
+struct S { a: Int = 0 }
+
+type Cfg = S
+
+type Loader = limine
+
+type Color = | Red
+
+type Pair = | Red | Green
+
+struct Root {
+  p:      Port = 80
+  q:      Port where 1024.. = 1080
+  s:      S = Cfg { a = 1 }
+  l:      L2 = L2.info
+  name:   Str = name(debug)
+  loader: Loader = limine
+  color:  Color = Red
+  pair:   Pair = Green
+  same:   Bool = same(info)
+  ok:     Bool = run(fn(s: Str) = s == "x")
+}
+
+fn name(l: L2) -> Str = match l {
+  L2.info => "info"
+  debug   => "debug"
+}
+
+fn same(l: L3) -> Bool = l == Level.info
+
+fn run(h: Handler) -> Bool = h("x")

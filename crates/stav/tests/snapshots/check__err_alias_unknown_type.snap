@@ -1,0 +1,8 @@
+---
+source: crates/stav/tests/check.rs
+expression: output
+---
+--- errors
+error[E0302]: unknown type `Red`
+  --> app/main.stav:1:14
+  help: write `type Color = | Red` to declare a sum with one variant `Red`

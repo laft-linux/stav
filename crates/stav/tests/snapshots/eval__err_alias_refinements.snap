@@ -1,0 +1,13 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- errors
+error[E0803]: value violates a refinement
+  --> app/main.stav:5:26
+  label: app/main.stav:5:26: 80 is not in 1024..
+  label: app/main.stav:5:6: constraint declared here
+error[E0803]: value violates a refinement
+  --> app/main.stav:8:5
+  label: app/main.stav:8:5: 0 is not in 1..=65535
+  label: app/main.stav:1:13: constraint declared here

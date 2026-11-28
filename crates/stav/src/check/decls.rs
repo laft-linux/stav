@@ -9,8 +9,8 @@ use super::model::{LocalDef, LocalId, SelfRead, Step};
 use super::suggest::did_you_mean;
 use super::totality::Node;
 use super::types::{
-    FieldDef, GlobalId, Number, ParamDef, Predicate, Refinement, RefinementId, StructDef, StructId,
-    SumDef, SumId, SymbolDef, SymbolId, Type, TypeId, VariantDef,
+    AliasId, FieldDef, GlobalId, Number, ParamDef, Predicate, Refinement, RefinementId, StructDef,
+    StructId, SumDef, SumId, SymbolDef, SymbolId, Type, TypeId, VariantDef,
 };
 use super::{Checker, Cx, SelfMode, graph};
 use crate::ast::{self, Expr, Item, LiteralKind, Stmt, UnaryOp};
@@ -54,6 +54,31 @@ pub(crate) enum TypeItem {
     Sum(SumId),
     /// A symbol type of the host.
     Symbol(SymbolId),
+    /// A type alias.
+    Alias(AliasId),
+}
+
+/// A type alias and how far the type it names is resolved.
+#[derive(Debug, Clone)]
+pub(crate) struct Alias<'p> {
+    /// The declared name.
+    pub(crate) name: String,
+    /// The file that declares it.
+    pub(crate) file: FileId,
+    /// The span of the name.
+    pub(crate) span: Span,
+    /// The type as written.
+    pub(crate) ty: ast::Type<'p>,
+    pub(crate) state: AliasState,
+}
+
+/// How far the type of an alias is resolved.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum AliasState {
+    Pending,
+    /// Being resolved, so a use now refers to the alias itself.
+    InProgress,
+    Done(TypeId),
 }
 
 /// The names a file declares or imports.
@@ -239,6 +264,18 @@ impl<'p> Checker<'p> {
                         continue;
                     }
                     type_spans.insert(name.clone(), span);
+                    if let Some(ty) = decl.aliased() {
+                        let alias = AliasId::new(self.aliases.len());
+                        self.aliases.push(Alias {
+                            name: name.clone(),
+                            file: id,
+                            span,
+                            ty,
+                            state: AliasState::Pending,
+                        });
+                        scope.types.insert(name, TypeItem::Alias(alias));
+                        continue;
+                    }
                     let sid = SumId::new(self.types.sums.len());
                     self.types.sums.push(SumDef {
                         name: name.clone(),
@@ -369,6 +406,7 @@ impl<'p> Checker<'p> {
             let span = match item {
                 TypeItem::Struct(s) => self.types.structure(*s).span,
                 TypeItem::Sum(s) => self.types.sum(*s).span,
+                TypeItem::Alias(a) => self.aliases[a.index()].span,
                 TypeItem::Symbol(_) => continue,
             };
             self.shadows_prelude(file, name, span);
@@ -426,13 +464,17 @@ impl<'p> Checker<'p> {
                     }
                     Item::Type(decl) => {
                         let Some(name) = decl.name() else { continue };
-                        let Some(TypeItem::Sum(sid)) = scope.types.get(name.text()).copied() else {
-                            continue;
-                        };
-                        if self.types.sum(sid).span != name.span() {
-                            continue;
+                        match scope.types.get(name.text()).copied() {
+                            Some(TypeItem::Sum(sid)) if self.types.sum(sid).span == name.span() => {
+                                self.resolve_sum(id, sid, decl);
+                            }
+                            Some(TypeItem::Alias(alias))
+                                if self.aliases[alias.index()].span == name.span() =>
+                            {
+                                self.resolve_alias(alias);
+                            }
+                            _ => {}
                         }
-                        self.resolve_sum(id, sid, decl);
                     }
                     Item::Fn(decl) => {
                         let Some(ValueItem::Global(g)) = decl
@@ -733,7 +775,99 @@ impl<'p> Checker<'p> {
             TypeItem::Struct(s) => Type::Struct(s),
             TypeItem::Sum(s) => Type::Sum(s),
             TypeItem::Symbol(s) => Type::Symbol(s),
+            TypeItem::Alias(alias) => {
+                return match self.resolve_alias(alias) {
+                    Some(ty) => {
+                        if let Some(owner) = owner {
+                            self.calls.depend(owner, Node::Alias(alias), file, span);
+                        }
+                        ty
+                    }
+                    None => {
+                        let name = self.aliases[alias.index()].name.clone();
+                        self.error(
+                            file,
+                            Diagnostic::error("E0410", span, format!("`{name}` refers to itself"))
+                                .with_help(
+                                    "an alias names another type, so it cannot contain itself",
+                                ),
+                        );
+                        TypeId::ERROR
+                    }
+                };
+            }
         })
+    }
+
+    /// Returns the type an alias names, resolving it on first use, or
+    /// `None` while it is being resolved, when a use refers to the alias
+    /// itself.
+    fn resolve_alias(&mut self, alias: AliasId) -> Option<TypeId> {
+        match self.aliases[alias.index()].state {
+            AliasState::Done(ty) => return Some(ty),
+            AliasState::InProgress => return None,
+            AliasState::Pending => {}
+        }
+        self.aliases[alias.index()].state = AliasState::InProgress;
+        let Alias { file, ty, .. } = self.aliases[alias.index()].clone();
+        let resolved = if self.unknown_variant_like(alias) {
+            TypeId::ERROR
+        } else {
+            self.resolve_type(file, ty, Some(Node::Alias(alias)))
+        };
+        self.aliases[alias.index()].state = AliasState::Done(resolved);
+        Some(resolved)
+    }
+
+    /// Reports an alias of a bare type name that names no type, such as
+    /// `type Color = Red`, which was most likely meant as a sum with one
+    /// variant.
+    fn unknown_variant_like(&mut self, alias: AliasId) -> bool {
+        let Alias { name, file, ty, .. } = self.aliases[alias.index()].clone();
+        let ast::Type::Named(named) = ty else {
+            return false;
+        };
+        let Some(path) = named.path() else {
+            return false;
+        };
+        let segments: Vec<SyntaxToken<'p>> = path.segments().collect();
+        let [variant] = segments.as_slice() else {
+            return false;
+        };
+        let text = variant.text();
+        if named.args().next().is_some()
+            || BUILTIN_TYPE_NAMES.contains(&text)
+            || self.lookup_type(file, text).is_some()
+        {
+            return false;
+        }
+        self.error(
+            file,
+            Diagnostic::error("E0302", variant.span(), format!("unknown type `{text}`")).with_help(
+                format!(
+                    "write `type {name} = | {text}` to declare a sum with one variant `{text}`"
+                ),
+            ),
+        );
+        true
+    }
+
+    /// Returns the struct, sum or symbol type that an alias names, or the
+    /// alias itself when it names another kind of type. Every other item
+    /// is returned as it is.
+    pub(super) fn expand_alias(&self, item: TypeItem) -> TypeItem {
+        let TypeItem::Alias(alias) = item else {
+            return item;
+        };
+        let AliasState::Done(ty) = self.aliases[alias.index()].state else {
+            return item;
+        };
+        match self.types.get(self.types.peel(ty)) {
+            Type::Struct(s) => TypeItem::Struct(*s),
+            Type::Sum(s) => TypeItem::Sum(*s),
+            Type::Symbol(s) => TypeItem::Symbol(*s),
+            _ => item,
+        }
     }
 
     /// Looks a type name up in a file and then in the prelude.
@@ -1238,16 +1372,17 @@ impl<'p> Checker<'p> {
 
     /// Finds the root struct.
     pub(super) fn find_root(&mut self, name: &str) {
-        let mut found = match self.prelude.types.get(name) {
-            Some(TypeItem::Struct(s)) => Some(*s),
+        let mut found = match self.prelude.types.get(name).map(|&i| self.expand_alias(i)) {
+            Some(TypeItem::Struct(s)) => Some(s),
             _ => None,
         };
         for &entry in &self.program.entries {
             if found.is_some() {
                 break;
             }
-            if let Some(TypeItem::Struct(s)) = self.scopes[entry.index()].types.get(name) {
-                found = Some(*s);
+            let item = self.scopes[entry.index()].types.get(name).copied();
+            if let Some(TypeItem::Struct(s)) = item.map(|i| self.expand_alias(i)) {
+                found = Some(s);
             }
         }
         if found.is_none() {

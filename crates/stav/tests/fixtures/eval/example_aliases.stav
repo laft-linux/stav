@@ -1,0 +1,17 @@
+## A web upstream.
+struct Upstream {
+  ## Base URL.
+  url:     Str where matches(r"https?://.+")
+  weight:  Int where 1..=100 = 10
+  tags:    Set<Str> = []
+  backup:  Option<Str>
+}
+
+type Port = Int where 1..=65535
+type Handler = Fn(Str) -> Bool
+type Upstreams = Map<Str, Upstream>
+
+struct Root {
+  listen: Port = 8080
+  admin:  Port where 1024.. = 9000
+}
