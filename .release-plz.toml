@@ -33,6 +33,10 @@ body = """
         {% if commit.breaking %}[**breaking**] {% endif %}\
         {{ commit.message | upper_first }} - \
         ([{{ commit.id | truncate(length=7, end="") }}]({{ remote.link }}/commit/{{ commit.id }}))\
+    {% if commit.breaking and commit.breaking_description and commit.breaking_description != commit.message %}
+
+{{ commit.breaking_description | indent(prefix="  ", first=true) }}
+    {% endif %}\
 {% endmacro -%}
 
 {% if version %}\
