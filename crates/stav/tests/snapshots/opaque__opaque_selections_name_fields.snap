@@ -1,0 +1,9 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: rendered
+---
+error[E0805]: `system.repos.core` names no field: `system.repos` is a `Map<Str, Repo>`, and only fields can be selected
+  help: select `system.repos`
+error[E0805]: `system.nothing` names no field: `System` has no field `nothing`
+error[E0805]: `system.package.mesa` lies inside the opaque field `System.package`
+  help: select `system.package`, or an attribute outside it

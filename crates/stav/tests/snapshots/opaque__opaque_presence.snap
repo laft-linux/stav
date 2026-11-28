@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: diagnostics.to_string()
+---
+error[E0619]: `o.repos` needs the opaque field `T.package`
+  --> app/main.stav:1:5
+  label: app/main.stav:1:5: this `none` competes with a contribution to `T.package`
+  label: app/main.stav:2:5: this contributes to `T.package`, so its priority is not known
+  note: whether `o` is present is needed for the selected attribute `o.repos`
+  help: compute `o.repos` without `T.package`, which this evaluation leaves opaque

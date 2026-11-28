@@ -31,12 +31,25 @@ pub(crate) enum Node {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CallGraph {
     pub(crate) edges: BTreeMap<(Node, Node), (FileId, Span)>,
+    /// The edges in the order they were added, so that the edges of an
+    /// unchecked definition can be taken back.
+    pub(crate) added: Vec<(Node, Node)>,
 }
 
 impl CallGraph {
     /// Records that evaluating `from` may evaluate `to`.
     pub(crate) fn depend(&mut self, from: Node, to: Node, file: FileId, span: Span) {
-        self.edges.entry((from, to)).or_insert((file, span));
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.edges.entry((from, to)) {
+            entry.insert((file, span));
+            self.added.push((from, to));
+        }
+    }
+
+    /// Removes the edges added after the first `len`.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        for edge in self.added.drain(len.min(self.added.len())..) {
+            self.edges.remove(&edge);
+        }
     }
 }
 

@@ -22,9 +22,12 @@
 //! A parameter or payload field without default whose type is an `Option`
 //! may be left out of a call, and is then `none`.
 
+use std::rc::Rc;
+
 use super::host::RelPath;
 use super::load::FileId;
 use super::types::{GlobalId, StructId, SumId, SymbolId, TypeId};
+use crate::span::Span;
 
 macro_rules! id {
     ($(#[$doc:meta])* $name:ident) => {
@@ -81,6 +84,9 @@ pub(crate) struct LocalDef {
     pub(crate) reads: Vec<SelfRead>,
     /// The body whose blocks the reads refer to, for a late binding.
     pub(crate) top: Option<u32>,
+    /// The read of an opaque field that leaves the value of the binding
+    /// unchecked.
+    pub(crate) unchecked: Option<Rc<Read>>,
 }
 
 /// What the checker learned about one node.
@@ -96,6 +102,52 @@ pub(crate) enum Fact {
     Let(LetFact),
     For(ForFact),
     Pattern(PatternFact),
+    /// The expression or statement is an unchecked definition, or an
+    /// unchecked entry of a split literal. Its other nodes have no facts
+    /// the evaluator may use.
+    Unchecked(Rc<Read>),
+    /// An attribute or block statement that contributes to an opaque
+    /// field.
+    Opaque(OpaqueFact),
+}
+
+/// The first read of an opaque field in an unchecked definition, or what
+/// an unchecked contribution writes for an opaque field.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Read {
+    pub(crate) file: FileId,
+    pub(crate) span: Span,
+    /// The opaque field: its struct and the index of the field.
+    pub(crate) field: (StructId, usize),
+    pub(crate) kind: ReadKind,
+}
+
+/// How code reads an opaque field.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ReadKind {
+    /// A field access such as `self.package` or `v?.package`.
+    Field,
+    /// A construction of a value of the named type, which holds the field.
+    Construction(String),
+    /// A use of the named binding, whose value reads the field as the read
+    /// says.
+    Binding(String, Rc<Read>),
+    /// A top-level `let` of a host module whose type, named here, holds the
+    /// field.
+    HostType(String),
+    /// A statement or a split literal entry that writes the field.
+    Contribution,
+}
+
+/// An attribute or block statement that contributes to an opaque field.
+#[derive(Debug, Clone)]
+pub(crate) struct OpaqueFact {
+    /// The path from the body to the opaque field, which it ends at.
+    pub(crate) steps: Vec<Step>,
+    /// The priority of the marker of an attribute statement, read from the
+    /// syntax, or plain for a block, whose statements may carry any marker.
+    pub(crate) priority: Priority,
+    pub(crate) read: Rc<Read>,
 }
 
 /// The type, meaning and `self` reads of an expression.

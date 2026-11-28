@@ -1,0 +1,9 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: diagnostics.to_string()
+---
+error[E0619]: the root needs the opaque field `System.package`
+  --> app/main.stav:4:3
+  label: app/main.stav:4:3: this contributes to `System.package`
+  note: `system.package` is needed for the root
+  help: select attributes that do not need `System.package`, or evaluate the root without opaque fields

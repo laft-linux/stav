@@ -2,10 +2,11 @@
 //! fields, variants and signatures, and the checks on the shape of types.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use super::builtins::PRIORITY_MARKERS;
 use super::load::{FileId, Role};
-use super::model::{LocalDef, LocalId, SelfRead, Step};
+use super::model::{LocalDef, LocalId, Read, SelfRead, Step};
 use super::suggest::did_you_mean;
 use super::totality::Node;
 use super::types::{
@@ -126,6 +127,9 @@ pub(crate) struct FnSig {
     pub(crate) ret: TypeId,
     /// The locals the parameters are bound to in the body.
     pub(crate) binds: Vec<LocalId>,
+    /// The read of an opaque field that leaves the body and the parameter
+    /// defaults unchecked.
+    pub(crate) unchecked: Option<Rc<Read>>,
 }
 
 /// A top-level `let`.
@@ -137,6 +141,8 @@ pub(crate) struct LetGlobal {
     pub(crate) state: LetState,
     /// The start of the declaration, for finding forward references.
     pub(crate) start: usize,
+    /// The read of an opaque field that leaves the value unchecked.
+    pub(crate) unchecked: Option<Rc<Read>>,
 }
 
 /// How far the type of a top-level `let` is known.
@@ -309,6 +315,7 @@ impl<'p> Checker<'p> {
                             params: Vec::new(),
                             ret: TypeId::ERROR,
                             binds: Vec::new(),
+                            unchecked: None,
                         }),
                     });
                     scope.values.insert(name, ValueItem::Global(g));
@@ -332,6 +339,7 @@ impl<'p> Checker<'p> {
                             annotation: None,
                             state: LetState::Pending,
                             start: decl.syntax().span().start,
+                            unchecked: None,
                         }),
                     });
                     scope.values.insert(name, ValueItem::Global(g));
@@ -527,9 +535,10 @@ impl<'p> Checker<'p> {
                 continue;
             }
             seen.insert(name.clone(), span);
+            let opaque = self.opaque_requested(sid, &name);
             let ty = match field.ty() {
-                Some(ty) => self.resolve_type(file, ty, owner),
-                None => TypeId::ERROR,
+                Some(ty) if !opaque => self.resolve_type(file, ty, owner),
+                _ => TypeId::ERROR,
             };
             self.check_field_type(file, ty, field.ty().map_or(span, |t| t.syntax().span()));
             fields.push(FieldDef {
@@ -540,6 +549,7 @@ impl<'p> Checker<'p> {
                 default: field.default().map(|d| d.syntax().index()),
                 block: field.block_kind().map(|k| k.text().to_owned()),
                 doc: ast::doc_comment(field.syntax()),
+                opaque,
             });
         }
         self.types.structs[sid.index()].fields = fields;
@@ -1349,7 +1359,11 @@ impl<'p> Checker<'p> {
                 queued.owner,
             );
             for (value, ty) in queued.args {
+                let definition = self.begin_definition(&mut cx);
                 self.expr(&mut cx, value, Some(ty));
+                if let Some(read) = self.end_definition(&mut cx, definition) {
+                    self.fact(&cx, value.syntax(), super::model::Fact::Unchecked(read));
+                }
             }
         }
     }
@@ -1659,6 +1673,7 @@ impl<'p> Checker<'p> {
             ty,
             reads,
             top,
+            unchecked: None,
         });
         id
     }

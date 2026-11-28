@@ -26,8 +26,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use stav::{
-    Format, Host, HostModule, ImplicitRefs, ImportRoot, Limits, MemoryLoader, RootSpec, Source,
-    Span, SymbolType, Value, check,
+    AttrPath, Format, Host, HostModule, HostValues, ImplicitRefs, ImportRoot, Limits, MemoryLoader,
+    RootSpec, Source, Span, SymbolType, Value, check,
 };
 
 const ROOT_DIR: &str = "app";
@@ -239,6 +239,74 @@ fn evaluating_twice_gives_identical_canonical_json() {
             path.display()
         );
     }
+}
+
+#[test]
+fn selecting_the_root_path_gives_the_whole_evaluation() {
+    for path in fixtures() {
+        let text = fs::read_to_string(&path).expect("the fixture is readable");
+        let fixture = fixture(&text);
+        let checked = check(&fixture.host, &fixture.root).expect("the fixture checks");
+        let whole = checked.eval(&fixture.limits);
+        let selected =
+            checked.eval_selected(&fixture.limits, &HostValues::new(), &[AttrPath::root()]);
+        assert_eq!(
+            describe(&whole),
+            describe(&selected),
+            "{} differs when the root is selected",
+            path.display()
+        );
+    }
+}
+
+/// Describes an evaluation: its errors, or its renderings, and the spans
+/// and priority of every attribute of its value.
+fn describe(result: &Result<stav::Evaluated, stav::Diagnostics>) -> String {
+    let evaluated = match result {
+        Ok(evaluated) => evaluated,
+        Err(diagnostics) => return diagnostics.to_string(),
+    };
+    let mut out = String::new();
+    for format in [Format::Json, Format::Toml, Format::Yaml] {
+        match evaluated.render(format) {
+            Ok(text) => out.push_str(&text),
+            Err(diagnostics) => out.push_str(&diagnostics.to_string()),
+        }
+    }
+    let mut stack = vec![(AttrPath::root(), evaluated.value().clone())];
+    while let Some((path, value)) = stack.pop() {
+        out.push_str(&format!(
+            "{path}: {:?} {:?}\n",
+            evaluated.spans(&path),
+            evaluated.priority(&path)
+        ));
+        let inner: Vec<(String, Value)> = match value {
+            Value::Struct { fields, .. } => fields,
+            Value::Map(entries) => entries,
+            Value::Variant {
+                name,
+                fields: Some(fields),
+                ..
+            } => fields
+                .into_iter()
+                .map(|(field, value)| (format!("{name}.{field}"), value))
+                .collect(),
+            Value::List(items) | Value::Set(items) => items
+                .into_iter()
+                .enumerate()
+                .map(|(i, item)| (i.to_string(), item))
+                .collect(),
+            _ => Vec::new(),
+        };
+        for (key, value) in inner {
+            let mut next = path.clone();
+            for part in key.split('.') {
+                next = next.join(part);
+            }
+            stack.push((next, value));
+        }
+    }
+    out
 }
 
 fn canonical(text: &str) -> Result<String, String> {

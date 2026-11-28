@@ -17,6 +17,7 @@ pub(crate) mod graph;
 mod host;
 mod load;
 pub(crate) mod model;
+mod opaque;
 mod pattern;
 mod schema;
 pub(crate) mod suggest;
@@ -29,8 +30,8 @@ use std::path::{Path, PathBuf};
 
 pub use decls::is_builtin_type_name;
 pub use host::{
-    Host, HostModule, ImplicitRefs, ImportRoot, LoadError, Loader, MemoryLoader, RelPath, RootSpec,
-    Source, SymbolType,
+    FieldName, Host, HostModule, ImplicitRefs, ImportRoot, LoadError, Loader, MemoryLoader,
+    RelPath, RootSpec, Source, SymbolType,
 };
 pub use load::{FileId, MAX_SOURCE_LEN};
 pub use schema::{SchemaField, SchemaIndex, SchemaStruct, SchemaSum, SchemaVariant};
@@ -159,6 +160,15 @@ impl Checked {
                 state: decls::LetState::Done { reads, .. },
                 ..
             }) if !reads.is_empty()
+        )
+    }
+
+    /// Returns whether the value of a top-level `let` reads an opaque
+    /// field, so that it is never evaluated.
+    pub(crate) fn let_unchecked(&self, g: types::GlobalId) -> bool {
+        matches!(
+            &self.globals[g.index()].kind,
+            decls::GlobalKind::Let(l) if l.unchecked.is_some()
         )
     }
 
@@ -434,6 +444,8 @@ struct Cx {
     /// Whether a map or struct literal checked next contributes per field,
     /// so that it may leave required fields out.
     partial: bool,
+    /// The first read of an opaque field in the definition being checked.
+    unchecked: Option<std::rc::Rc<model::Read>>,
 }
 
 impl Cx {
@@ -447,6 +459,7 @@ impl Cx {
             reads: Vec::new(),
             limit: None,
             partial: false,
+            unchecked: None,
         }
     }
 
@@ -486,6 +499,10 @@ struct Checker<'p> {
     /// the struct they are a body of. Checking them from a queue instead of
     /// at their `include` keeps long chains of part files off the stack.
     parts: Vec<(UnitId, FileId, StructId)>,
+    /// The opaque fields the root asks for.
+    opaque: opaque::Requested,
+    /// The first opaque field that values of each struct and sum hold.
+    holders: opaque::Holders,
 }
 
 impl<'p> Checker<'p> {
@@ -517,12 +534,16 @@ impl<'p> Checker<'p> {
             pending_predicates: Vec::new(),
             predicate_args: Vec::new(),
             parts: Vec::new(),
+            opaque: BTreeMap::new(),
+            holders: (Vec::new(), Vec::new()),
         }
     }
 
     fn run(&mut self, spec: &RootSpec) {
         self.declare();
+        self.find_opaque_structs(&spec.opaque);
         self.resolve_declarations();
+        self.check_opaque_fields();
         self.find_root(spec.root_struct.as_deref());
         self.check_structure();
         self.check_declaration_bodies();

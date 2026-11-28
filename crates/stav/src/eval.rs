@@ -21,6 +21,7 @@ mod expr;
 mod finish;
 mod input;
 mod merge;
+mod opaque;
 mod pattern;
 mod val;
 
@@ -33,7 +34,8 @@ use std::rc::Rc;
 use serde::de::DeserializeOwned;
 
 use self::env::Env;
-use self::merge::{NodeId, SpanTree};
+use self::merge::{NodeId, Seg, SpanTree};
+use self::opaque::{Phase, Selection};
 use self::val::{FnVal, MapVal, Seq, StructVal, Val, VariantVal, canonical, depth_of};
 use crate::check::model::{Fact, UnitId};
 use crate::check::types::{GlobalId, StructId, SumId};
@@ -417,11 +419,91 @@ impl Checked {
         limits: &Limits,
         values: &HostValues,
     ) -> Result<Evaluated, Diagnostics> {
+        self.eval_selected(limits, values, &[AttrPath::root()])
+    }
+
+    /// Evaluates the attributes at `paths` and what they need, within
+    /// `limits` and with the host values `values` of
+    /// [`Checked::eval_with`], which is this function for the root path.
+    ///
+    /// Every statement of the root is evaluated, in order, and so is every
+    /// declared default that reads no `self` and may fill a field, because
+    /// they decide which contributions exist. The merge decides winners,
+    /// shapes and presence for the whole root. Only then does evaluation
+    /// restrict itself to the selected attributes: it reports the `self`
+    /// cycles, evaluates the deferred contributions and checks the required
+    /// fields of what they need, and checks refinements on the selected
+    /// values. References are checked only when the root path is selected,
+    /// so a selected `Ref` that names no block is returned as written.
+    ///
+    /// The result holds the root struct with only the fields that lead to
+    /// the selected attributes, in declaration order, and each selected
+    /// attribute with its whole value. An `Option` on the way that is
+    /// `none` is `none` in the value. Its methods answer for paths at or
+    /// under a selected attribute, and give `E0805` or nothing elsewhere.
+    ///
+    /// This is how a host evaluates a root with opaque fields (see
+    /// [`RootSpec::opaque`](crate::RootSpec::opaque)): it selects the
+    /// attributes it needs before it knows the types of those fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns `E0805` when a path names no field at every step, through
+    /// structs and `Option`s of structs, or lies inside an opaque field, and
+    /// the errors of [`Checked::eval_with`] that the selected attributes
+    /// meet. `E0619` stops the evaluation when it needs an opaque field: a
+    /// selected attribute needs it, or an evaluated statement, function or
+    /// default reads it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use stav::{AttrPath, FieldName, Host, HostValues, ImportRoot, Limits, MemoryLoader, RootSpec};
+    ///
+    /// let source = "struct Repo { url: Str }\n\
+    ///               struct System { repos: Map<Str, Repo> = {} block repo, package: Pkgs }\n\
+    ///               struct Root { system: System }\n\
+    ///               system {\n  package.mesa.x11 = false\n  \
+    ///               repo core { url = \"https://example.org/core\" }\n}\n";
+    /// let host = Host::new(MemoryLoader::new().with_file("app/main.stav", source));
+    /// let mut root = RootSpec::new("Root", vec!["app/main.stav".into()], vec![ImportRoot::new("app")]);
+    /// root.opaque = vec![FieldName::new("System", "package")];
+    /// let checked = stav::check(&host, &root)?;
+    /// let repos = AttrPath::new(["system", "repos"]);
+    /// let found = checked.eval_selected(&Limits::default(), &HostValues::new(), &[repos.clone()])?;
+    /// let url: String = found.get(&repos.join("core").join("url"))?;
+    /// assert_eq!(url, "https://example.org/core");
+    ///
+    /// let whole = checked.eval(&Limits::default()).unwrap_err();
+    /// assert_eq!(whole.iter().next().unwrap().diagnostic.code, "E0619");
+    /// # Ok::<(), stav::Diagnostics>(())
+    /// ```
+    pub fn eval_selected(
+        &self,
+        limits: &Limits,
+        values: &HostValues,
+        paths: &[AttrPath],
+    ) -> Result<Evaluated, Diagnostics> {
+        let files = self.named_sources();
+        let mut fields = Vec::with_capacity(paths.len());
+        let mut errors = Vec::new();
+        for path in paths {
+            match self.field_path(path) {
+                Ok(segs) => fields.push(segs),
+                Err(error) => errors.push(*error),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(Diagnostics {
+                files,
+                items: errors,
+            });
+        }
         let mut eval = Eval::new(self, *limits);
+        eval.selection.paths = paths.to_vec();
         let inputs = eval.host_inputs(values);
         eval.inputs = inputs;
-        let result = eval.run();
-        let files = self.named_sources();
+        let result = eval.run(&fields);
         match result {
             Ok((value, spans, symbols)) if eval.errors.is_empty() => Ok(Evaluated {
                 value,
@@ -445,6 +527,61 @@ impl Checked {
                 })
             }
         }
+    }
+}
+
+impl Checked {
+    /// Returns the fields that `path` names from the root struct, or
+    /// `E0805` when it names something else.
+    fn field_path(&self, path: &AttrPath) -> Result<Vec<Seg>, Box<FileDiagnostic>> {
+        let types = &self.types;
+        let mut s = self.root;
+        let mut segs = Vec::new();
+        let keys = path.keys();
+        for (k, key) in keys.iter().enumerate() {
+            let def = types.structure(s);
+            let prefix = AttrPath::new(keys[..k].iter().cloned());
+            let Some((i, field)) = def.field(key) else {
+                let help = crate::check::suggest::did_you_mean(
+                    key,
+                    def.fields.iter().map(|f| f.name.as_str()),
+                );
+                return Err(opaque::no_field(
+                    format!(
+                        "`{path}` names no field: `{}` has no field `{key}`",
+                        def.name
+                    ),
+                    help,
+                ));
+            };
+            segs.push(Seg::Field(u32::try_from(i).unwrap_or(u32::MAX)));
+            if k + 1 == keys.len() {
+                break;
+            }
+            let here = prefix.join(key.clone());
+            if field.opaque {
+                return Err(opaque::no_field(
+                    format!("`{path}` lies inside the opaque field `{}.{key}`", def.name),
+                    Some(format!("select `{here}`, or an attribute outside it")),
+                ));
+            }
+            let inner = types
+                .unwrap_option(field.ty)
+                .unwrap_or_else(|| types.peel(field.ty));
+            match types.get(inner) {
+                crate::check::types::Type::Struct(next) => s = *next,
+                _ => {
+                    return Err(opaque::no_field(
+                        format!(
+                            "`{path}` names no field: `{here}` is a `{}`, and only fields can be selected",
+                            types.render_plain(field.ty)
+                        ),
+                        Some(format!("select `{here}`")),
+                    ));
+                }
+            }
+        }
+        Ok(segs)
     }
 }
 
@@ -485,6 +622,10 @@ pub(crate) struct Eval<'c> {
     /// input, found before evaluation starts, and merge conflicts. `run`
     /// stops after the phase that reported them.
     pub(crate) errors: Vec<FileDiagnostic>,
+    pub(crate) phase: Phase,
+    /// The attributes being finalized, innermost last.
+    pub(crate) finalizing: Vec<NodeId>,
+    pub(crate) selection: Selection,
 }
 
 /// The state of a top-level `let` or function.
@@ -523,20 +664,23 @@ impl<'c> Eval<'c> {
             part_ids: BTreeMap::new(),
             work: Rc::default(),
             errors: Vec::new(),
+            phase: Phase::Statements,
+            finalizing: Vec::new(),
+            selection: Selection::default(),
         }
     }
 
-    fn run(&mut self) -> R<(Value, SpanTree, Vec<finish::Symbol>)> {
+    fn run(&mut self, paths: &[Vec<Seg>]) -> R<(Value, SpanTree, Vec<finish::Symbol>)> {
         if !self.errors.is_empty() {
             return Ok((Value::None, SpanTree::default(), Vec::new()));
         }
         self.globals_in_order()?;
         let pending = self.bodies()?;
-        let root = self.merge_all(pending)?;
+        let found = self.merge_all(pending, paths)?;
         if !self.errors.is_empty() {
             return Ok((Value::None, SpanTree::default(), Vec::new()));
         }
-        self.finish(&root)
+        self.finish(&found, paths)
     }
 
     /// Returns the unit of a file that is not a part file.
@@ -818,6 +962,9 @@ impl<'c> Eval<'c> {
     /// the declarations it uses.
     fn globals_in_order(&mut self) -> R<()> {
         for g in self.c.let_order.clone() {
+            if self.c.let_unchecked(g) {
+                continue;
+            }
             if self.c.let_reads(g) {
                 self.globals[g.index()] = GlobalSlot::Late;
                 continue;

@@ -21,8 +21,8 @@ use super::{Eval, R};
 use crate::ast::{self, Expr, Key, Stmt};
 use crate::check::FileId;
 use crate::check::model::{
-    BlockRule, Callee, Fact, IncludeFact, LabelFact, LetFact, Meaning, Priority, SelfRead, Step,
-    Target, UnitId,
+    BlockRule, Callee, Fact, IncludeFact, LabelFact, LetFact, Meaning, OpaqueFact, Priority, Read,
+    ReadKind, SelfRead, Step, Target, UnitId,
 };
 use crate::check::types::{Type, TypeId};
 use crate::span::{SourceSpan, Span};
@@ -79,6 +79,31 @@ pub(crate) enum Kind {
     /// A deferred contribution whose value has been evaluated and merged
     /// in as contributions of its own.
     Spent,
+    /// An unchecked contribution: it has a priority but no value, and the
+    /// merge stops with `E0619` where it would need one.
+    Unchecked(Rc<Unchecked>),
+}
+
+/// What is known of an unchecked contribution.
+#[derive(Debug)]
+pub(crate) struct Unchecked {
+    /// The first read of an unchecked right-hand side or default, or the
+    /// place that writes an opaque field.
+    pub(crate) read: Rc<Read>,
+    /// Whether it is a whole value at its path, which may be `none` and
+    /// may be late. A contribution to an opaque field is not.
+    pub(crate) whole: bool,
+}
+
+impl Unchecked {
+    /// Returns the contribution of an unchecked definition, or of the entry
+    /// of a split literal that writes an opaque field, whose read is `read`.
+    pub(crate) fn new(read: &Rc<Read>) -> Self {
+        Self {
+            read: read.clone(),
+            whole: read.kind != ReadKind::Contribution,
+        }
+    }
 }
 
 /// The work a suspended contribution performs when it participates.
@@ -418,6 +443,9 @@ impl<'c> Eval<'c> {
             span: node.span(),
         };
         self.step(at)?;
+        if let Fact::Unchecked(read) = self.fact(body.unit, node.index()) {
+            return Err(self.entered(read));
+        }
         match statement {
             Stmt::Let(l) => self.let_statement(body, l),
             Stmt::Attr(attr) => self.attr(body, attr, out),
@@ -461,6 +489,9 @@ impl<'c> Eval<'c> {
             return Ok(());
         };
         let local = &self.c.units[body.unit.index()].locals[id.index()];
+        if local.unchecked.is_some() {
+            return Ok(());
+        }
         let annotation = l.ty().map(|_| local.ty);
         let slot = if local.reads.is_empty() {
             let val = self.expr(&body.cx(), value)?;
@@ -489,8 +520,13 @@ impl<'c> Eval<'c> {
 
     fn attr(&mut self, body: &mut Body, attr: ast::Attr<'c>, out: &mut Vec<Pending>) -> R<()> {
         let node = attr.syntax();
-        let Fact::Attr(fact) = self.fact(body.unit, node.index()) else {
-            return Err(self.bug(body.file, node.span(), "an attribute has no facts"));
+        let fact = match self.fact(body.unit, node.index()) {
+            Fact::Attr(fact) => fact,
+            Fact::Opaque(opaque) => {
+                out.push(self.opaque_contribution(body, opaque, node.span()));
+                return Ok(());
+            }
+            _ => return Err(self.bug(body.file, node.span(), "an attribute has no facts")),
         };
         let mut path = body.base.clone();
         path.extend(fact.steps.iter().map(|step| match step {
@@ -524,6 +560,13 @@ impl<'c> Eval<'c> {
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
         let meaning = match self.fact(cx.unit, e.syntax().index()) {
             Fact::Expr(f) => Some(&f.meaning),
+            Fact::Unchecked(read) => {
+                out.push(Pending {
+                    path,
+                    contrib: template.with(Kind::Unchecked(Rc::new(Unchecked::new(read)))),
+                });
+                return Ok(());
+            }
             _ => None,
         };
         if self.merge.graph_only
@@ -855,6 +898,28 @@ impl<'c> Eval<'c> {
         }
     }
 
+    /// Returns the unchecked contribution of a statement that writes an
+    /// opaque field.
+    fn opaque_contribution(&self, body: &Body, opaque: &OpaqueFact, span: Span) -> Pending {
+        let mut path = body.base.clone();
+        path.extend(opaque.steps.iter().map(|step| match step {
+            Step::Field(i) => Seg::Field(u32::try_from(*i).unwrap_or(u32::MAX)),
+            Step::Key(k) => Seg::Key(k.as_str().into()),
+        }));
+        let unchecked = Unchecked {
+            read: opaque.read.clone(),
+            whole: false,
+        };
+        Pending {
+            path,
+            contrib: body.contrib(
+                Prio::from(opaque.priority),
+                Kind::Unchecked(Rc::new(unchecked)),
+                span,
+            ),
+        }
+    }
+
     /// Returns the text of a key: an identifier, or the value of a string,
     /// interpolated if it must be.
     pub(crate) fn key_text(&mut self, cx: &Cx<'_>, key: Key<'c>) -> R<String> {
@@ -866,8 +931,13 @@ impl<'c> Eval<'c> {
 
     fn block(&mut self, body: &mut Body, block: ast::Block<'c>, out: &mut Vec<Pending>) -> R<()> {
         let node = block.syntax();
-        let Fact::Block(fact) = self.fact(body.unit, node.index()) else {
-            return Err(self.bug(body.file, node.span(), "a block has no facts"));
+        let fact = match self.fact(body.unit, node.index()) {
+            Fact::Block(fact) => fact,
+            Fact::Opaque(opaque) => {
+                out.push(self.opaque_contribution(body, opaque, node.span()));
+                return Ok(());
+            }
+            _ => return Err(self.bug(body.file, node.span(), "a block has no facts")),
         };
         let field = Seg::Field(u32::try_from(fact.field).unwrap_or(u32::MAX));
         let span = node.span();

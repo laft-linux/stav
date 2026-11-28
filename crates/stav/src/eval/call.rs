@@ -44,6 +44,7 @@ impl<'c> Eval<'c> {
     ) -> R<Val> {
         match fact.callee {
             Callee::Global(g) => {
+                self.checked_fn(g, at)?;
                 let params = match &self.c.globals[g.index()].kind {
                     GlobalKind::Fn(sig) => &sig.params,
                     GlobalKind::Let(_) => {
@@ -161,6 +162,27 @@ impl<'c> Eval<'c> {
         Ok((values, given))
     }
 
+    /// Stops with `E0619` when the body of the function `g`, called at
+    /// `at`, reads an opaque field.
+    fn checked_fn(&self, g: GlobalId, at: SourceSpan) -> R<()> {
+        let global = &self.c.globals[g.index()];
+        match &global.kind {
+            GlobalKind::Fn(sig) => match &sig.unchecked {
+                Some(read) => {
+                    let mut stop = self.entered(read);
+                    stop.0.diagnostic.labels.push(Label {
+                        file: Some(at.file),
+                        span: at.span,
+                        message: format!("in this call of `{}`", global.name),
+                    });
+                    Err(stop)
+                }
+                None => Ok(()),
+            },
+            GlobalKind::Let(_) => Ok(()),
+        }
+    }
+
     /// Calls a top-level function with its arguments in parameter order.
     pub(crate) fn call_global(&mut self, g: GlobalId, args: Vec<Val>, at: SourceSpan) -> R<Val> {
         let global = &self.c.globals[g.index()];
@@ -220,6 +242,7 @@ impl<'c> Eval<'c> {
     pub(crate) fn apply(&mut self, f: &FnVal, args: Vec<Val>, at: SourceSpan) -> R<Val> {
         match f {
             FnVal::Global(g) => {
+                self.checked_fn(*g, at)?;
                 if let GlobalKind::Fn(sig) = &self.c.globals[g.index()].kind {
                     for (param, value) in sig.params.iter().zip(&args) {
                         self.refine(param.ty, value, at)?;

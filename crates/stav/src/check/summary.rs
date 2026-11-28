@@ -217,11 +217,7 @@ impl Checked {
                 let path = ast::Attr::cast(node)
                     .and_then(ast::Attr::path)
                     .map_or(String::new(), |p| p.syntax().text().to_owned());
-                let priority = match attr.priority {
-                    Priority::Default => "default",
-                    Priority::Plain => "plain",
-                    Priority::Force => "force",
-                };
+                let priority = priority_name(attr.priority);
                 format!(
                     "{path}: {} ({priority}){}",
                     self.types.render_plain(attr.ty),
@@ -281,8 +277,21 @@ impl Checked {
                     .collect();
                 format!("for {}", binds.join(", "))
             }
+            Fact::Unchecked(read) => format!("unchecked, reads {}", self.field_label(read.field)),
+            Fact::Opaque(opaque) => format!(
+                "opaque {} ({})",
+                self.field_label(opaque.read.field),
+                priority_name(opaque.priority)
+            ),
             Fact::None | Fact::Expr(_) | Fact::Pattern(_) => return None,
         })
+    }
+
+    /// Returns a field as `Struct.field`.
+    fn field_label(&self, (s, field): (super::types::StructId, usize)) -> String {
+        let def = self.types.structure(s);
+        let name = def.fields.get(field).map_or("", |f| f.name.as_str());
+        format!("{}.{name}", def.name)
     }
 }
 
@@ -337,4 +346,12 @@ fn position(text: &str, offset: usize) -> (usize, usize) {
     let line = before.matches('\n').count() + 1;
     let start = before.rfind('\n').map_or(0, |i| i + 1);
     (line, before[start..].chars().count() + 1)
+}
+
+fn priority_name(priority: Priority) -> &'static str {
+    match priority {
+        Priority::Default => "default",
+        Priority::Plain => "plain",
+        Priority::Force => "force",
+    }
 }

@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: rendered
+---
+error[E0619]: `system.repos` needs the opaque field `System.package`
+  --> app/main.stav:10:21
+  label: app/main.stav:10:21: this needs `system.mirror` through `self`
+  label: schema.stav:5:20: `System.package` is read here
+  note: `system.mirror` is needed for the selected attribute `system.repos`
+  help: compute `system.repos` without `System.package`, which this evaluation leaves opaque

@@ -4,7 +4,7 @@
 use super::builtins::{self, Builtin, PRIORITY_MARKERS};
 use super::decls::{GlobalKind, ValueItem};
 use super::expr::PathItem;
-use super::model::{CallFact, Callee, ExprFact, Fact, Meaning};
+use super::model::{CallFact, Callee, ExprFact, Fact, Meaning, ReadKind};
 use super::suggest::did_you_mean;
 use super::totality::Node;
 use super::types::{GlobalId, ParamDef, SumId, SymbolId, Type, TypeId};
@@ -68,6 +68,11 @@ impl<'p> Checker<'p> {
                     self.synth_args(cx, &args);
                     return (self.types.intern(Type::Sum(s)), Meaning::Plain);
                 };
+                if let Some(field) = fields.iter().find_map(|f| self.held(f.ty)) {
+                    let name = format!("{}.{}", self.types.sum(s).name, variant.name);
+                    self.read(cx, span, field, ReadKind::Construction(name));
+                    return (TypeId::ERROR, Meaning::Plain);
+                }
                 if let Some(owner) = cx.owner {
                     self.calls
                         .depend(owner, Node::SumDefaults(s), cx.file, span);

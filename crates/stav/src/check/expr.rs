@@ -6,10 +6,11 @@
 //! synthesizes its own type, which is then coerced to the expected one.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use super::decls::{GlobalKind, LetState, TypeItem, ValueItem};
 use super::load::{Origin, join_relative};
-use super::model::{ExprFact, Fact, LetFact, LocalId, Meaning, SelfRead, Target};
+use super::model::{ExprFact, Fact, LetFact, LocalId, Meaning, Read, ReadKind, SelfRead, Target};
 use super::suggest::did_you_mean;
 use super::totality::Node;
 use super::types::{GlobalId, StructId, SumId, Type, TypeId};
@@ -35,6 +36,9 @@ impl<'p> Checker<'p> {
     /// is expected, and records what the evaluator needs to know about it.
     /// Returns the type of the expression in its position.
     pub(super) fn expr(&mut self, cx: &mut Cx, e: Expr<'p>, expected: Option<TypeId>) -> TypeId {
+        if cx.unchecked.is_some() {
+            return TypeId::ERROR;
+        }
         let start = cx.reads.len();
         let (ty, meaning) = self.expr_kind(cx, e, expected);
         let reads = cx.reads[start..].to_vec();
@@ -105,7 +109,7 @@ impl<'p> Checker<'p> {
 
     /// Returns the type that literals and names are resolved against: the
     /// expected type without refinements and without `Option`.
-    fn look_through(&self, expected: Option<TypeId>) -> Option<TypeId> {
+    pub(super) fn look_through(&self, expected: Option<TypeId>) -> Option<TypeId> {
         let expected = expected?;
         Some(
             self.types
@@ -566,6 +570,10 @@ impl<'p> Checker<'p> {
         if let Some(id) = cx.lookup(name) {
             let local = &self.units[cx.unit.index()].locals[id.index()];
             let (ty, reads, top) = (local.ty, local.reads.clone(), local.top);
+            if let Some(read) = local.unchecked.clone() {
+                self.binding_read(cx, name, span, read);
+                return Some((TypeId::ERROR, Meaning::Plain));
+            }
             self.use_late(cx, name, span, &reads, top);
             return Some((ty, Meaning::Local(id)));
         }
@@ -615,6 +623,12 @@ impl<'p> Checker<'p> {
                 }
                 let file = global.file;
                 let (ty, reads) = self.let_type(g);
+                if let GlobalKind::Let(l) = &self.globals[g.index()].kind
+                    && let Some(read) = l.unchecked.clone()
+                {
+                    self.binding_read(cx, &name, span, read);
+                    return (TypeId::ERROR, Meaning::Plain);
+                }
                 let top = self.entry_tops.get(&file).copied();
                 self.use_late(cx, &name, span, &reads, top);
                 ty
@@ -700,6 +714,14 @@ impl<'p> Checker<'p> {
             .node(node)
             .and_then(ast::Let::cast);
         let value = decl.and_then(ast::Let::value);
+        let mark = self.begin_definition(&mut cx);
+        let host = matches!(self.program.file(file).origin, Origin::HostModule(_));
+        if let (true, Some(annotation), Some(ty)) = (host, annotation, decl.and_then(ast::Let::ty))
+            && let Some(field) = self.held(annotation)
+        {
+            let name = self.types.render_plain(annotation);
+            self.read(&mut cx, ty.syntax().span(), field, ReadKind::HostType(name));
+        }
         let ty = match (value, annotation) {
             (Some(value), Some(annotation)) => {
                 self.expr(&mut cx, value, Some(annotation));
@@ -708,6 +730,14 @@ impl<'p> Checker<'p> {
             (Some(value), None) => self.expr(&mut cx, value, None),
             (None, annotation) => annotation.unwrap_or(TypeId::ERROR),
         };
+        if let Some(read) = self.end_definition(&mut cx, mark) {
+            if let Some(value) = value {
+                self.fact(&cx, value.syntax(), Fact::Unchecked(read.clone()));
+            }
+            if let GlobalKind::Let(l) = &mut self.globals[g.index()].kind {
+                l.unchecked = Some(read);
+            }
+        }
         if let Some(decl) = decl {
             self.fact(&cx, decl.syntax(), Fact::Let(LetFact::Global(g)));
         }
@@ -999,6 +1029,9 @@ impl<'p> Checker<'p> {
         }
         match want.map(|w| self.types.get(w).clone()) {
             Some(Type::Struct(s)) => {
+                if !partial && self.constructs(cx, s, span) {
+                    return (TypeId::ERROR, Meaning::Plain);
+                }
                 self.struct_entries(cx, s, &entries, span, partial);
                 return (want.unwrap_or(TypeId::ERROR), Meaning::Struct(s));
             }
@@ -1051,8 +1084,11 @@ impl<'p> Checker<'p> {
         self.check_map_keys(cx, key, entries);
         for entry in entries {
             if let Some(v) = entry.value() {
-                cx.partial = partial;
-                self.expr(cx, v, Some(value));
+                if partial {
+                    self.contribution(cx, v, value);
+                } else {
+                    self.expr(cx, v, Some(value));
+                }
             }
         }
     }
@@ -1150,6 +1186,19 @@ impl<'p> Checker<'p> {
             }
             set.entry(name.clone()).or_insert(key.span());
             let def = self.types.structure(s);
+            if partial
+                && let (Some((index, field)), Some(v)) = (def.field(&name), value)
+                && field.opaque
+            {
+                let read = Read {
+                    file: cx.file,
+                    span: entry.syntax().span(),
+                    field: (s, index),
+                    kind: ReadKind::Contribution,
+                };
+                self.fact(cx, v.syntax(), Fact::Unchecked(Rc::new(read)));
+                continue;
+            }
             let field_ty = match def.field(&name) {
                 Some((_, field)) => Some(field.ty),
                 None => {
@@ -1168,8 +1217,12 @@ impl<'p> Checker<'p> {
                 }
             };
             if let Some(v) = value {
-                cx.partial = partial;
-                self.expr(cx, v, Some(field_ty.unwrap_or(TypeId::ERROR)));
+                let ty = field_ty.unwrap_or(TypeId::ERROR);
+                if partial {
+                    self.contribution(cx, v, ty);
+                } else {
+                    self.expr(cx, v, Some(ty));
+                }
             }
         }
         if let Some(owner) = cx.owner {
@@ -1199,6 +1252,17 @@ impl<'p> Checker<'p> {
                 .with_help("set them, or give the fields defaults"),
             );
         }
+    }
+
+    /// Records a read when a literal builds a value of the struct `s`,
+    /// which holds an opaque field. Returns whether it does.
+    fn constructs(&mut self, cx: &mut Cx, s: StructId, span: Span) -> bool {
+        let Some(field) = self.held_by_struct(s) else {
+            return false;
+        };
+        let name = self.types.structure(s).name.clone();
+        self.read(cx, span, field, ReadKind::Construction(name));
+        true
     }
 
     fn struct_lit(
@@ -1231,6 +1295,9 @@ impl<'p> Checker<'p> {
             );
             return (TypeId::ERROR, Meaning::Plain);
         };
+        if !partial && self.constructs(cx, s, span) {
+            return (TypeId::ERROR, Meaning::Plain);
+        }
         self.struct_entries(cx, s, &entries, span, partial);
         (self.types.intern(Type::Struct(s)), Meaning::Struct(s))
     }
@@ -1434,6 +1501,10 @@ impl<'p> Checker<'p> {
             );
             return (TypeId::ERROR, Meaning::Plain);
         };
+        if f.opaque {
+            self.read(cx, field.syntax().span(), (s, index), ReadKind::Field);
+            return (TypeId::ERROR, Meaning::Plain);
+        }
         let mut ty = f.ty;
         if wrap {
             ty = self.types.option(ty);
@@ -1574,6 +1645,10 @@ impl<'p> Checker<'p> {
             );
             return (TypeId::ERROR, Meaning::Plain);
         };
+        if self.is_opaque(structure, index) {
+            self.read(cx, span, (structure, index), ReadKind::Field);
+            return (TypeId::ERROR, Meaning::Plain);
+        }
         let read = SelfRead {
             depth,
             structure,

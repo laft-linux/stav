@@ -17,6 +17,7 @@ use super::body::{
 };
 use super::call::Building;
 use super::env::Env;
+use super::opaque::{Need, Phase};
 use super::val::{Key, Val};
 use super::{Eval, MAX_VALUE_DEPTH, R, Stop};
 use crate::check::FileId;
@@ -90,6 +91,12 @@ enum Shape {
     /// The payload of the selected variant of a tagged sum.
     Payload(SumId, u32),
     Leaf,
+    /// An instance of an opaque field, whose value the merge never
+    /// computes.
+    Opaque,
+    /// An option whose presence depends on an unchecked contribution: the
+    /// deciding `none`, if one decides it, and the unchecked contribution.
+    Undecided(Option<u32>, u32),
 }
 
 #[derive(Debug, Clone)]
@@ -301,8 +308,18 @@ impl Merge {
         Some(n)
     }
 
-    fn contrib(&self, id: u32) -> &Contrib {
+    pub(crate) fn contrib(&self, id: u32) -> &Contrib {
         &self.contribs[id as usize]
+    }
+
+    /// Returns the contributions at `n`.
+    pub(crate) fn contribs_at(&self, n: NodeId) -> &[u32] {
+        &self.node(n).contribs
+    }
+
+    /// Returns the attribute that holds `n`.
+    pub(crate) fn parent(&self, n: NodeId) -> Option<NodeId> {
+        self.node(n).parent
     }
 
     /// Returns whether a contribution exists at or under `n`.
@@ -381,12 +398,32 @@ enum Presence {
     Absent,
     Present,
     Conflict(Vec<u32>),
+    /// The presence depends on an unchecked contribution.
+    Undecided(Option<u32>, u32),
+}
+
+/// What a selected path names.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Selected {
+    /// The attribute.
+    Node(NodeId),
+    /// The `Option` at this many steps of the path is `none`.
+    Absent(usize),
+    /// The struct at this many steps of the path has no value, or nothing
+    /// sets the attribute at this many steps.
+    Missing(usize),
 }
 
 impl<'c> Eval<'c> {
     /// Structures all contributions, validates static whole competitors,
-    /// checks every dependency that may run, and finalizes the merged value.
-    pub(crate) fn merge_all(&mut self, pending: Vec<Pending>) -> R<Val> {
+    /// checks every dependency that the attributes at `paths` may need,
+    /// and finalizes those attributes. Returns what each path names, with
+    /// its merged value.
+    pub(crate) fn merge_all(
+        &mut self,
+        pending: Vec<Pending>,
+        paths: &[Vec<Seg>],
+    ) -> R<Vec<(Selected, Val)>> {
         self.merge.nodes.push(Node::new(None, None, 0));
         for p in pending {
             if p.path.len() > MAX_VALUE_DEPTH as usize {
@@ -404,14 +441,27 @@ impl<'c> Eval<'c> {
         self.structure(NodeId::ROOT, self.c.root_ty)?;
         self.static_paths(NodeId::ROOT, self.c.root_ty, true);
         if !self.errors.is_empty() {
-            return Ok(Val::None);
+            return Ok(Vec::new());
         }
+        self.phase = Phase::Shapes;
         self.prepare_default_shapes()?;
         self.static_paths(NodeId::ROOT, self.c.root_ty, true);
         self.merge.static_checked = true;
         if !self.errors.is_empty() {
-            return Ok(Val::None);
+            return Ok(Vec::new());
         }
+        self.phase = Phase::Needs;
+        let mut selected = Vec::with_capacity(paths.len());
+        for (i, path) in paths.iter().enumerate() {
+            selected.push(self.select(i, path)?);
+        }
+        let targets: Vec<NodeId> = selected
+            .iter()
+            .filter_map(|s| match s {
+                Selected::Node(n) => Some(*n),
+                _ => None,
+            })
+            .collect();
         let mut fallback_owners: BTreeSet<NodeId> = self
             .merge
             .nodes
@@ -427,10 +477,10 @@ impl<'c> Eval<'c> {
                     .or_insert_with(|| self.fallback_creator(boundary))
             })
         });
-        let order = self.check_cycles(NodeId::ROOT, &fallback_owners)?;
+        let order = self.check_cycles(NodeId::ROOT, &fallback_owners, &targets)?;
         self.merge.fallback_creators = None;
         if !self.errors.is_empty() {
-            return Ok(Val::None);
+            return Ok(Vec::new());
         }
         for n in order {
             let node = self.merge.node(n);
@@ -448,7 +498,39 @@ impl<'c> Eval<'c> {
                 self.finalize(n)?;
             }
         }
-        self.finalize(NodeId::ROOT)
+        let mut found = Vec::with_capacity(selected.len());
+        for s in selected {
+            let value = match s {
+                Selected::Node(n) => self.finalize(n)?,
+                Selected::Absent(_) | Selected::Missing(_) => Val::None,
+            };
+            found.push((s, value));
+        }
+        Ok(found)
+    }
+
+    /// Returns what the field path `path`, the selected attribute `index`,
+    /// names once the structure of the root is known. Stops with `E0619`
+    /// when a presence on the path depends on an unchecked contribution.
+    fn select(&mut self, index: usize, path: &[Seg]) -> R<Selected> {
+        let mut n = NodeId::ROOT;
+        for (depth, seg) in path.iter().enumerate() {
+            self.selection.reasons.entry(n).or_insert((index, None));
+            match self.merge.node(n).shape {
+                Shape::Absent => return Ok(Selected::Absent(depth)),
+                Shape::Undecided(none, unchecked) => {
+                    return Err(self.opaque_need(n, Need::Presence { none, unchecked }));
+                }
+                Shape::Struct(_) => {}
+                _ => return Ok(Selected::Missing(depth)),
+            }
+            match self.merge.child(n, seg) {
+                Some(child) => n = child,
+                None => return Ok(Selected::Missing(depth + 1)),
+            }
+        }
+        self.selection.reasons.entry(n).or_insert((index, None));
+        Ok(Selected::Node(n))
     }
 
     /// Exposes participating fixed default shapes before the dependency graph.
@@ -470,7 +552,9 @@ impl<'c> Eval<'c> {
                     );
                 waiting |= !shared_map
                     && ancestor.pending.iter().any(|&id| {
-                        matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if d.is_late())
+                        let kind = &self.merge.contrib(id).kind;
+                        (matches!(kind, Kind::Deferred(d) if d.is_late())
+                            || matches!(kind, Kind::Unchecked(_)))
                             && !self.covered(c, self.merge.contrib(id).prio)
                     });
                 current = ancestor.parent;
@@ -580,6 +664,10 @@ impl<'c> Eval<'c> {
             node.winners.clear();
             node.pending.clear();
         }
+        if self.node_field(n).is_some() {
+            self.merge.set_shape(n, Shape::Opaque);
+            return Ok(());
+        }
         let types = &self.c.types;
         let option = types.unwrap_option(ty).is_some();
         let inner = types.unwrap_option(ty).unwrap_or_else(|| types.peel(ty));
@@ -614,6 +702,10 @@ impl<'c> Eval<'c> {
                     self.merge.set_shape(n, Shape::Conflict);
                     return Ok(());
                 }
+                Presence::Undecided(none, unchecked) => {
+                    self.merge.set_shape(n, Shape::Undecided(none, unchecked));
+                    return Ok(());
+                }
                 Presence::Present => {}
             }
         }
@@ -623,7 +715,12 @@ impl<'c> Eval<'c> {
             .contribs
             .iter()
             .copied()
-            .filter(|&id| matches!(self.merge.contrib(id).kind, Kind::Deferred(_)))
+            .filter(|&id| {
+                matches!(
+                    self.merge.contrib(id).kind,
+                    Kind::Deferred(_) | Kind::Unchecked(_)
+                )
+            })
             .collect();
         match self.c.types.get(inner).clone() {
             Type::Struct(s) => {
@@ -686,7 +783,7 @@ impl<'c> Eval<'c> {
                     .copied()
                     .filter(|&id| match &self.merge.contrib(id).kind {
                         Kind::Value(Val::None) => !option,
-                        Kind::Value(_) | Kind::Deferred(_) => true,
+                        Kind::Value(_) | Kind::Deferred(_) | Kind::Unchecked(_) => true,
                         _ => false,
                     })
                     .collect();
@@ -787,9 +884,10 @@ impl<'c> Eval<'c> {
             Type::Struct(_) | Type::Map(_, _) | Type::Data
         ) || matches!(types.get(inner), Type::Sum(s) if !types.sum(*s).is_nullary());
         let late = structural
-            && node.contribs.iter().chain(&node.checks).any(
-                |&id| matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if d.is_late()),
-            );
+            && node.contribs.iter().chain(&node.checks).any(|&id| {
+                matches!(&self.merge.contrib(id).kind, Kind::Deferred(d) if d.is_late())
+                    || matches!(&self.merge.contrib(id).kind, Kind::Unchecked(u) if u.whole)
+            });
         self.merge.node_mut(n).late_whole |= late;
     }
 
@@ -810,7 +908,8 @@ impl<'c> Eval<'c> {
                         && self.merge.contrib(other).prio != Prio::Declared
                         && !(self.c.types.unwrap_option(self.merge.node(n).ty).is_some()
                             && at.contains(&other)
-                            && matches!(self.merge.contrib(other).kind, Kind::Value(Val::None)))
+                            && (matches!(self.merge.contrib(other).kind, Kind::Value(Val::None))
+                                || matches!(&self.merge.contrib(other).kind, Kind::Unchecked(u) if u.whole)))
                         && self.merge.contrib(other).prio <= contrib.prio
                         && !matches!(self.merge.contrib(other).kind, Kind::Spent)
                 })
@@ -874,10 +973,16 @@ impl<'c> Eval<'c> {
         let node = self.merge.node(n);
         let option = self.c.types.unwrap_option(node.ty);
         let inner = option.unwrap_or_else(|| self.c.types.peel(node.ty));
+        let whole = |kind: &Kind| match kind {
+            Kind::Unchecked(u) => u.whole && !matches!(self.c.types.get(inner), Type::Struct(_)),
+            _ => false,
+        };
         if option.is_some()
             && node.contribs.iter().any(|&id| {
                 let c = self.merge.contrib(id);
-                c.prio > priority && matches!(c.kind, Kind::Value(Val::None) | Kind::Deferred(_))
+                c.prio > priority
+                    && (matches!(c.kind, Kind::Value(Val::None) | Kind::Deferred(_))
+                        || whole(&c.kind))
             })
         {
             return true;
@@ -890,6 +995,7 @@ impl<'c> Eval<'c> {
             c.prio > priority
                 && match &c.kind {
                     Kind::Value(_) | Kind::Deferred(_) => true,
+                    Kind::Unchecked(_) => whole(&c.kind),
                     Kind::Present => {
                         c.complete && matches!(node.shape, Shape::Struct(_) | Shape::Payload(..))
                     }
@@ -1059,7 +1165,8 @@ impl<'c> Eval<'c> {
                 && !self.declared_replaced(n, id)
                 && !(n == boundary
                     && (matches!(contrib.kind, Kind::Value(Val::None))
-                        || matches!(&contrib.kind, Kind::Deferred(d) if d.is_late())))
+                        || matches!(&contrib.kind, Kind::Deferred(d) if d.is_late())
+                        || matches!(&contrib.kind, Kind::Unchecked(u) if u.whole)))
         };
         // A witness survives additions only while it remains attached and
         // applicable. Rechecking also observes spent or replaced defaults,
@@ -1151,6 +1258,33 @@ impl<'c> Eval<'c> {
         if !merge.static_checked {
             present.extend(merge.checks_below(n));
         }
+        let unchecked = |id: &&u32| matches!(merge.contrib(**id).kind, Kind::Unchecked(_));
+        let earliest = |ids: &mut dyn Iterator<Item = &u32>| {
+            ids.copied().min_by_key(|&id| merge.contrib(id).seq)
+        };
+        let own = present.iter().filter(unchecked).filter(|&&id| {
+            node.contribs.contains(&id)
+                && matches!(&merge.contrib(id).kind, Kind::Unchecked(u) if u.whole)
+        });
+        if let Some(id) = earliest(&mut own.into_iter()) {
+            return Presence::Undecided(None, id);
+        }
+        let deciding = none.iter().copied().max_by_key(|&id| {
+            (
+                merge.contrib(id).prio,
+                std::cmp::Reverse(merge.contrib(id).seq),
+            )
+        });
+        if let Some(deciding) = deciding {
+            let prio = merge.contrib(deciding).prio;
+            let mut open = present.iter().filter(unchecked).filter(|&&id| {
+                let contrib = merge.contrib(id);
+                contrib.prio != Prio::Declared && contrib.prio <= prio
+            });
+            if let Some(id) = earliest(&mut open) {
+                return Presence::Undecided(Some(deciding), id);
+            }
+        }
         let top = |ids: &[u32]| ids.iter().map(|&id| merge.contrib(id).prio).max();
         match (top(&none), top(&present)) {
             (_, None) => Presence::Absent,
@@ -1194,7 +1328,8 @@ impl<'c> Eval<'c> {
                 && node.contribs.iter().chain(&node.checks).any(|&other| {
                     let candidate = self.merge.contrib(other);
                     candidate.prio > contrib.prio
-                        && matches!(&candidate.kind, Kind::Deferred(d) if d.is_late())
+                        && (matches!(&candidate.kind, Kind::Deferred(d) if d.is_late())
+                            || matches!(&candidate.kind, Kind::Unchecked(u) if u.whole))
                 })
             {
                 return true;
@@ -1437,7 +1572,9 @@ impl<'c> Eval<'c> {
         let at = self.node_at(n);
         self.enter(at)?;
         self.merge.node_mut(n).state = State::Busy;
+        self.finalizing.push(n);
         let result = self.finalize_inner(n);
+        self.finalizing.pop();
         self.leave();
         match result {
             Ok(Some(value)) => {
@@ -1550,6 +1687,48 @@ impl<'c> Eval<'c> {
                     .map(Some)
             }
             Shape::Leaf => self.leaf(n),
+            Shape::Opaque => Err(self.opaque_need(n, Need::Field)),
+            Shape::Undecided(none, unchecked) => {
+                Err(self.opaque_need(n, Need::Presence { none, unchecked }))
+            }
+        }
+    }
+
+    /// Returns the opaque field that `n` is an instance of.
+    pub(crate) fn node_field(&self, n: NodeId) -> Option<(StructId, usize)> {
+        let node = self.merge.node(n);
+        let Some(Seg::Field(i)) = node.seg else {
+            return None;
+        };
+        let parent = self.merge.node(node.parent?);
+        let types = &self.c.types;
+        let inner = types
+            .unwrap_option(parent.ty)
+            .unwrap_or_else(|| types.peel(parent.ty));
+        let Type::Struct(s) = types.get(inner) else {
+            return None;
+        };
+        let i = i as usize;
+        types
+            .structure(*s)
+            .fields
+            .get(i)
+            .filter(|f| f.opaque)
+            .map(|_| (*s, i))
+    }
+
+    /// Returns where the opaque field that `n` is an instance of is
+    /// declared.
+    pub(crate) fn opaque_declaration(&self, n: NodeId) -> (FileId, Span) {
+        match self.node_field(n) {
+            Some((s, i)) => {
+                let def = self.c.types.structure(s);
+                (def.file, def.fields.get(i).map_or(def.span, |f| f.span))
+            }
+            None => {
+                let at = self.node_at(n);
+                (at.file, at.span)
+            }
         }
     }
 
@@ -1604,6 +1783,10 @@ impl<'c> Eval<'c> {
                 let contrib = self.merge.contrib(id).clone();
                 if self.replaced(c, contrib.prio) {
                     self.merge.set_kind(id, Kind::Spent);
+                } else if let Kind::Unchecked(_) = &contrib.kind {
+                    if !self.covered_path(c, n, contrib.prio) {
+                        return Err(self.opaque_need(n, Need::Contribution(id)));
+                    }
                 } else if let Kind::Deferred(deferred) = &contrib.kind {
                     let ty = self.merge.node(c).ty;
                     let types = &self.c.types;
@@ -1676,6 +1859,9 @@ impl<'c> Eval<'c> {
         }
         for &id in &winners {
             let contrib = self.merge.contrib(id).clone();
+            if let Kind::Unchecked(_) = &contrib.kind {
+                return Err(self.opaque_need(n, Need::Contribution(id)));
+            }
             let Kind::Deferred(deferred) = &contrib.kind else {
                 continue;
             };
@@ -1907,6 +2093,7 @@ impl<'c> Eval<'c> {
                 }
                 (None, Kind::Present | Kind::Spent) => "present".to_owned(),
                 (None, Kind::Deferred(_)) => "a value that reads `self`".to_owned(),
+                (None, Kind::Unchecked(_)) => "an unchecked value".to_owned(),
             };
             let mut label = format!("{what} ({})", contrib.prio.name());
             if let Some(site) = contrib.via.as_ref().and_then(|v| v.first()) {
@@ -2006,7 +2193,7 @@ impl<'c> Eval<'c> {
         AttrPath::new(keys)
     }
 
-    fn display_path(&self, n: NodeId) -> String {
+    pub(crate) fn display_path(&self, n: NodeId) -> String {
         if self.merge.graph_only && n != NodeId::ROOT {
             let mut keys = Vec::new();
             let mut current = Some(n);
@@ -2032,13 +2219,18 @@ impl<'c> Eval<'c> {
 
     /// Checks computed-entry instances in a disposable trie, never in the value
     /// being merged. Only participating literals can introduce placeholders.
-    fn check_cycles(&mut self, top: NodeId, fallback_owners: &BTreeSet<NodeId>) -> R<Vec<NodeId>> {
+    fn check_cycles(
+        &mut self,
+        top: NodeId,
+        fallback_owners: &BTreeSet<NodeId>,
+        targets: &[NodeId],
+    ) -> R<Vec<NodeId>> {
         let mut pending = Vec::new();
         for n in self.merge.reached(top) {
             pending.extend(self.computed_literals(n).into_iter().map(|id| (n, id)));
         }
         if pending.is_empty() {
-            return self.dependency_order(top, fallback_owners);
+            return self.dependency_order(top, fallback_owners, targets);
         }
         let graph = self.merge.clone();
         let original = std::mem::replace(&mut self.merge, graph);
@@ -2099,9 +2291,12 @@ impl<'c> Eval<'c> {
                         .or_insert_with(|| self.fallback_creator(boundary))
                 })
             });
-            self.dependency_order(top, &owners)
+            self.dependency_order(top, &owners, targets)
         })();
         self.merge = original;
+        self.selection
+            .reasons
+            .retain(|n, _| n.index() < original_len);
         result.map(|order| {
             order
                 .into_iter()
@@ -2135,15 +2330,17 @@ impl<'c> Eval<'c> {
     }
 
     /// Reports cycles among the deferred contributions the merge may evaluate
-    /// at and inside `top`, and stops when there is one. Otherwise returns the
-    /// attributes in an order where each comes after the attributes it
-    /// depends on. A shared static fallback-owner snapshot avoids rescanning
-    /// each owner per field. Finalizing in dependency order never recurses
-    /// along a long chain of dependencies.
+    /// for the attributes that `targets` need, at and inside `top`, and stops
+    /// when there is one. Otherwise returns the needed attributes in an order
+    /// where each comes after the attributes it depends on, and records why
+    /// each is needed. A shared static fallback-owner snapshot avoids
+    /// rescanning each owner per field. Finalizing in dependency order never
+    /// recurses along a long chain of dependencies.
     fn dependency_order(
         &mut self,
         top: NodeId,
         fallback_owners: &BTreeSet<NodeId>,
+        targets: &[NodeId],
     ) -> R<Vec<NodeId>> {
         let nodes = self.merge.reached(top);
         let mut index = BTreeMap::new();
@@ -2208,8 +2405,12 @@ impl<'c> Eval<'c> {
                 targets
             })
             .collect();
+        let needed = self.needed(&nodes, &index, &edges, targets);
         let mut found: Vec<FileDiagnostic> = Vec::new();
-        let components = graph::components(&adj);
+        let components: Vec<Vec<usize>> = graph::components(&adj)
+            .into_iter()
+            .filter(|component| component.iter().any(|&i| needed[i]))
+            .collect();
         for cycle in graph::cycles_of(&adj, &components) {
             let mut diagnostic: Option<(FileId, Diagnostic)> = None;
             for (k, &from) in cycle.iter().enumerate() {
@@ -2259,11 +2460,64 @@ impl<'c> Eval<'c> {
             });
         }
         if found.is_empty() {
-            return Ok(components.into_iter().flatten().map(|i| nodes[i]).collect());
+            return Ok(components
+                .into_iter()
+                .flatten()
+                .filter(|&i| needed[i])
+                .map(|i| nodes[i])
+                .collect());
         }
         let first = found.remove(0);
         self.errors.extend(found);
         Err(Stop(Box::new(first)))
+    }
+
+    /// Returns which of `nodes` the attributes `targets` need: the nodes
+    /// that `edges` reach from them. Records, for each, the target that
+    /// needs it and the last contribution on the way whose `self` read
+    /// needed it.
+    fn needed(
+        &mut self,
+        nodes: &[NodeId],
+        index: &BTreeMap<NodeId, usize>,
+        edges: &[Vec<(usize, Option<u32>)>],
+        targets: &[NodeId],
+    ) -> Vec<bool> {
+        let mut needed = vec![false; nodes.len()];
+        let mut reasons: Vec<(usize, Option<SourceSpan>)> = vec![(0, None); nodes.len()];
+        let mut queue = std::collections::VecDeque::new();
+        for &target in targets {
+            let Some(&i) = index.get(&target) else {
+                continue;
+            };
+            if !needed[i] {
+                needed[i] = true;
+                reasons[i] = self
+                    .selection
+                    .reasons
+                    .get(&target)
+                    .copied()
+                    .unwrap_or((0, None));
+                queue.push_back(i);
+            }
+        }
+        while let Some(i) = queue.pop_front() {
+            for &(j, via) in &edges[i] {
+                if needed[j] {
+                    continue;
+                }
+                needed[j] = true;
+                let read_by = via.map(|id| self.merge.contrib(id).at());
+                reasons[j] = (reasons[i].0, read_by.or(reasons[i].1));
+                queue.push_back(j);
+            }
+        }
+        for (i, &n) in nodes.iter().enumerate() {
+            if needed[i] {
+                self.selection.reasons.insert(n, reasons[i]);
+            }
+        }
+        needed
     }
 
     /// Returns the attributes a deferred contribution reads through
@@ -2319,11 +2573,50 @@ impl<'c> Eval<'c> {
         self.merge.inside(n)
     }
 
-    /// Returns where each attribute of the final value came from.
-    pub(crate) fn walk_spans(&self) -> SpanTree {
+    /// Returns the attributes of `nodes` that no other of them holds, in
+    /// their order.
+    pub(crate) fn outermost(&self, nodes: &[NodeId]) -> Vec<NodeId> {
+        let held = |n: NodeId| {
+            let mut current = self.merge.node(n).parent;
+            while let Some(c) = current {
+                if nodes.contains(&c) {
+                    return true;
+                }
+                current = self.merge.node(c).parent;
+            }
+            false
+        };
+        let mut out: Vec<NodeId> = Vec::new();
+        for &n in nodes {
+            if !held(n) && !out.contains(&n) {
+                out.push(n);
+            }
+        }
+        out
+    }
+
+    /// Returns where each attribute of the final value came from, for the
+    /// attributes `roots` and everything inside them, none holding another.
+    pub(crate) fn walk_spans(&self, roots: &[NodeId]) -> SpanTree {
         let mut tree = SpanTree::default();
-        let mut stack = vec![(NodeId::ROOT, 0usize)];
         tree.nodes.push(SpanNode::default());
+        let mut stack = Vec::new();
+        for &root in roots {
+            let mut slot = 0;
+            for key in self.attr_path(root).keys() {
+                let children = &tree.nodes[slot].children;
+                slot = match children.binary_search_by(|(k, _)| k.as_str().cmp(key)) {
+                    Ok(i) => children[i].1,
+                    Err(i) => {
+                        let index = tree.nodes.len();
+                        tree.nodes[slot].children.insert(i, (key.clone(), index));
+                        tree.nodes.push(SpanNode::default());
+                        index
+                    }
+                };
+            }
+            stack.push((root, slot));
+        }
         while let Some((n, slot)) = stack.pop() {
             let node = self.merge.node(n);
             let mut ids: Vec<u32> = node.contribs.clone();

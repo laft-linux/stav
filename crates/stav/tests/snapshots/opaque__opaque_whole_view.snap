@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: rendered
+---
+error[E0619]: `system.repos` needs the opaque field `View.package`
+  --> app/main.stav:11:21
+  label: app/main.stav:11:21: this needs `system.views.dev.package` through `self`
+  label: app/main.stav:8:14: this contributes to `View.package`
+  note: `system.views.dev.package` is needed for the selected attribute `system.repos`
+  help: compute `system.repos` without `View.package`, which this evaluation leaves opaque

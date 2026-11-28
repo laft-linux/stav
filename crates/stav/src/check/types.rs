@@ -100,6 +100,9 @@ pub(crate) struct FieldDef {
     /// The block kind of a `block kind` clause.
     pub(crate) block: Option<String>,
     pub(crate) doc: Option<String>,
+    /// Whether the root leaves the field opaque, so that its type, default
+    /// and refinement are not checked.
+    pub(crate) opaque: bool,
 }
 
 impl FieldDef {

@@ -2,14 +2,16 @@
 //! priority markers, and the `self` dependencies of each body.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use super::decls::{GlobalKind, ValueItem};
 use super::graph;
 use super::load::FileId;
 use super::model::{
-    AttrFact, BlockFact, BlockRule, Fact, ForFact, IncludeFact, LabelFact, LetFact, Priority,
-    SelfRead, Step, Target, UnitId,
+    AttrFact, BlockFact, BlockRule, Fact, ForFact, IncludeFact, LabelFact, LetFact, OpaqueFact,
+    Priority, Read, ReadKind, SelfRead, Step, Target, UnitId,
 };
+use super::opaque::written_priority;
 use super::suggest::did_you_mean;
 use super::types::{StructId, Type, TypeId};
 use super::{Binding, BodyCx, Checker, Cx, Frame, SelfMode};
@@ -28,6 +30,15 @@ pub(crate) struct SelfGraph {
 }
 
 impl SelfGraph {
+    pub(super) fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Removes the edges added after the first `len`.
+    pub(super) fn truncate(&mut self, len: usize) {
+        self.edges.truncate(len);
+    }
+
     fn node(&mut self, path: Vec<String>, field: String, label: String) -> usize {
         let next = self.labels.len();
         *self.nodes.entry((path, field)).or_insert_with(|| {
@@ -141,13 +152,24 @@ impl<'p> Checker<'p> {
             Stmt::Attr(attr) => self.attr(cx, attr, target),
             Stmt::Block(block) => self.block(cx, block, target),
             Stmt::Include(include) => self.include(cx, include, target, included),
-            Stmt::If(branch) => self.if_statement(cx, branch, target, included),
+            Stmt::If(branch) => {
+                let definition = self.begin_definition(cx);
+                self.if_statement(cx, branch, target, included);
+                if let Some(read) = self.end_definition(cx, definition) {
+                    self.fact(cx, branch.syntax(), Fact::Unchecked(read));
+                }
+            }
             Stmt::For(each) => {
                 let span = each.syntax().span();
+                let definition = self.begin_definition(cx);
                 let source = match each.collection() {
                     Some(e) => self.structural(cx, e, None, "a `for` collection"),
                     None => TypeId::ERROR,
                 };
+                if let Some(read) = self.end_definition(cx, definition) {
+                    self.fact(cx, each.syntax(), Fact::Unchecked(read));
+                    return;
+                }
                 let mark = cx.scope.len();
                 let names: Vec<_> = each.names().collect();
                 let binds = self.iterate(cx, source, &names, span);
@@ -173,6 +195,9 @@ impl<'p> Checker<'p> {
         if let Some(condition) = branch.condition() {
             self.structural(cx, condition, Some(TypeId::BOOL), "an `if` condition");
         }
+        if cx.unchecked.is_some() {
+            return;
+        }
         let before = included.clone();
         if let Some(body) = branch.then_body() {
             let mark = cx.scope.len();
@@ -181,6 +206,7 @@ impl<'p> Checker<'p> {
         }
         let mut otherwise = before;
         match branch.else_branch() {
+            _ if cx.unchecked.is_some() => {}
             Some(ast::ElseBranch::Body(body)) => {
                 let mark = cx.scope.len();
                 self.nested_statements(cx, body.statements(), target, &mut otherwise);
@@ -216,6 +242,7 @@ impl<'p> Checker<'p> {
     fn let_statement(&mut self, cx: &mut Cx, l: ast::Let<'p>) {
         let annotation = l.ty().map(|t| self.resolve_local_type(cx, t));
         let saved = std::mem::take(&mut cx.reads);
+        let definition = self.begin_definition(cx);
         let ty = match (l.value(), annotation) {
             (Some(v), Some(a)) => {
                 self.expr(cx, v, Some(a));
@@ -224,9 +251,16 @@ impl<'p> Checker<'p> {
             (Some(v), None) => self.expr(cx, v, None),
             (None, a) => a.unwrap_or(TypeId::ERROR),
         };
+        let unchecked = self.end_definition(cx, definition);
         let reads = std::mem::replace(&mut cx.reads, saved);
         let Some(name) = l.name() else { return };
         let id = self.local(cx, name.text(), ty, reads);
+        if let Some(read) = unchecked {
+            if let Some(value) = l.value() {
+                self.fact(cx, value.syntax(), Fact::Unchecked(read.clone()));
+            }
+            self.units[cx.unit.index()].locals[id.index()].unchecked = Some(read);
+        }
         cx.scope.push((name.text().to_owned(), Binding::Local(id)));
         self.fact(cx, l.syntax(), Fact::Let(LetFact::Local(id)));
     }
@@ -293,6 +327,23 @@ impl<'p> Checker<'p> {
                     owner = self.target_name(t);
                     steps.push(Step::Field(field.index));
                     names.push(text);
+                    if let Target::Struct(s) = t
+                        && self.is_opaque(s, field.index)
+                    {
+                        let read = Read {
+                            file: cx.file,
+                            span: attr.syntax().span(),
+                            field: (s, field.index),
+                            kind: ReadKind::Contribution,
+                        };
+                        let fact = OpaqueFact {
+                            steps,
+                            priority: attr.value().map_or(Priority::Plain, written_priority),
+                            read: Rc::new(read),
+                        };
+                        self.fact(cx, attr.syntax(), Fact::Opaque(fact));
+                        return;
+                    }
                     place = Place::Type(field.ty);
                     i += 1;
                 }
@@ -328,10 +379,14 @@ impl<'p> Checker<'p> {
             return;
         };
         let saved = std::mem::take(&mut cx.reads);
-        cx.partial = true;
-        self.expr(cx, value, Some(ty.unwrap_or(TypeId::ERROR)));
-        cx.partial = false;
+        let definition = self.begin_definition(cx);
+        let mut unchecked = self.contribution(cx, value, ty.unwrap_or(TypeId::ERROR));
+        if let Some(read) = self.end_definition(cx, definition) {
+            self.fact(cx, value.syntax(), Fact::Unchecked(read));
+            unchecked = true;
+        }
         let reads = std::mem::replace(&mut cx.reads, saved);
+        let reads = if unchecked { Vec::new() } else { reads };
         let Some(ty) = ty else { return };
         if !reads.is_empty() {
             self.late_contribution(cx, &names, owner, &reads, value.syntax().span());
@@ -347,6 +402,42 @@ impl<'p> Checker<'p> {
                 reads,
             }),
         );
+    }
+
+    /// Checks an expression that the merge contributes per field or key
+    /// when it is a struct or map literal: the right-hand side of an
+    /// attribute statement, a declared default, or an entry of such a
+    /// literal. An expression that is not such a literal is a definition
+    /// of its own. Returns whether it is unchecked.
+    pub(super) fn contribution(&mut self, cx: &mut Cx, e: Expr<'p>, ty: TypeId) -> bool {
+        if self.splits(e, ty) {
+            cx.partial = true;
+            self.expr(cx, e, Some(ty));
+            cx.partial = false;
+            return false;
+        }
+        let definition = self.begin_definition(cx);
+        self.expr(cx, e, Some(ty));
+        match self.end_definition(cx, definition) {
+            Some(read) => {
+                self.fact(cx, e.syntax(), Fact::Unchecked(read));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Returns whether the merge contributes `e` per field or key at an
+    /// attribute of type `ty`.
+    fn splits(&self, e: Expr<'p>, ty: TypeId) -> bool {
+        match e {
+            Expr::Paren(paren) => paren.expr().is_some_and(|inner| self.splits(inner, ty)),
+            Expr::StructLit(_) => true,
+            Expr::Map(_) => self.look_through(Some(ty)).is_some_and(|want| {
+                matches!(self.types.get(want), Type::Struct(_) | Type::Map(..))
+            }),
+            _ => false,
+        }
     }
 
     /// Returns the priority of a right-hand side and the contributed value:
@@ -483,19 +574,41 @@ impl<'p> Checker<'p> {
             Some(text) => LabelFact::Static(text),
             None => LabelFact::Dynamic,
         });
-        if let Some(Key::Str(string)) = label {
-            let saved = std::mem::replace(&mut cx.self_mode, SelfMode::Forbidden("a block label"));
-            let reads = std::mem::take(&mut cx.reads);
-            self.interpolations(cx, string);
-            cx.self_mode = saved;
-            cx.reads = reads;
-        }
         let fields = self.body_fields(target);
         let clause = match target {
             Target::Struct(_) => fields.iter().find(|f| f.block.as_deref() == Some(kind)),
             _ => None,
         };
         let named = fields.iter().find(|f| f.name == kind);
+        if let (Target::Struct(s), Some(field)) = (target, clause.or(named))
+            && self.is_opaque(s, field.index)
+        {
+            let read = Read {
+                file: cx.file,
+                span: block.syntax().span(),
+                field: (s, field.index),
+                kind: ReadKind::Contribution,
+            };
+            let fact = OpaqueFact {
+                steps: vec![Step::Field(field.index)],
+                priority: Priority::Plain,
+                read: Rc::new(read),
+            };
+            self.fact(cx, block.syntax(), Fact::Opaque(fact));
+            return;
+        }
+        if let Some(Key::Str(string)) = label {
+            let definition = self.begin_definition(cx);
+            let saved = std::mem::replace(&mut cx.self_mode, SelfMode::Forbidden("a block label"));
+            let reads = std::mem::take(&mut cx.reads);
+            self.interpolations(cx, string);
+            cx.self_mode = saved;
+            cx.reads = reads;
+            if let Some(read) = self.end_definition(cx, definition) {
+                self.fact(cx, block.syntax(), Fact::Unchecked(read));
+                return;
+            }
+        }
         let segment = match &label_fact {
             Some(LabelFact::Static(text)) => text.clone(),
             _ => format!("#{}", block.syntax().index()),
@@ -780,11 +893,16 @@ impl<'p> Checker<'p> {
             return;
         }
         let expected = self.types.intern(Type::Part(s));
+        let definition = self.begin_definition(cx);
         let found = if let Expr::Part(_) = value {
             self.structural(cx, value, Some(expected), "an `include` expression")
         } else {
             self.structural(cx, value, None, "an `include` expression")
         };
+        if let Some(read) = self.end_definition(cx, definition) {
+            self.fact(cx, include.syntax(), Fact::Unchecked(read));
+            return;
+        }
         match self.types.get(self.types.peel(found)).clone() {
             Type::Part(a) if a == s => {}
             Type::Part(a) => {
@@ -930,7 +1048,7 @@ impl<'p> Checker<'p> {
                 SelfMode::Default(sid),
                 Some(super::totality::Node::StructDefaults(sid)),
             );
-            for field in fields {
+            for (i, field) in fields.into_iter().enumerate() {
                 let Some(e) = field
                     .default
                     .and_then(|n| file.parsed.tree.node(n))
@@ -938,8 +1056,21 @@ impl<'p> Checker<'p> {
                 else {
                     continue;
                 };
-                cx.partial = true;
-                self.expr(&mut cx, e, Some(field.ty));
+                if field.opaque {
+                    let read = Read {
+                        file: id,
+                        span: e.syntax().span(),
+                        field: (sid, i),
+                        kind: ReadKind::Contribution,
+                    };
+                    self.fact(&cx, e.syntax(), Fact::Unchecked(Rc::new(read)));
+                    continue;
+                }
+                let definition = self.begin_definition(&mut cx);
+                self.contribution(&mut cx, e, field.ty);
+                if let Some(read) = self.end_definition(&mut cx, definition) {
+                    self.fact(&cx, e.syntax(), Fact::Unchecked(read));
+                }
                 cx.reads.clear();
             }
         }
@@ -961,7 +1092,11 @@ impl<'p> Checker<'p> {
                     .and_then(|n| file.parsed.tree.node(n))
                     .and_then(Expr::cast)
                 {
+                    let definition = self.begin_definition(&mut cx);
                     self.expr(&mut cx, e, Some(param.ty));
+                    if let Some(read) = self.end_definition(&mut cx, definition) {
+                        self.fact(&cx, e.syntax(), Fact::Unchecked(read));
+                    }
                 }
             }
         }
@@ -1004,6 +1139,8 @@ impl<'p> Checker<'p> {
             SelfMode::Forbidden("a parameter default"),
             owner,
         );
+        let definition = self.begin_definition(&mut defaults);
+        let mut default_nodes = Vec::new();
         for param in &params {
             if let Some(e) = param
                 .default
@@ -1011,9 +1148,11 @@ impl<'p> Checker<'p> {
                 .and_then(Expr::cast)
             {
                 self.expr(&mut defaults, e, Some(param.ty));
+                default_nodes.push(e);
             }
         }
         let mut cx = Cx::new(unit, file, SelfMode::Forbidden("a function body"), owner);
+        cx.unchecked = defaults.unchecked.take();
         let mut binds = Vec::new();
         for param in &params {
             let id = self.local(&cx, &param.name, param.ty, Vec::new());
@@ -1029,6 +1168,15 @@ impl<'p> Checker<'p> {
             .and_then(ast::FnDecl::body);
         if let Some(body) = body {
             self.expr(&mut cx, body, Some(ret));
+        }
+        let Some(read) = self.end_definition(&mut cx, definition) else {
+            return;
+        };
+        for e in default_nodes.iter().copied().chain(body) {
+            self.fact(&cx, e.syntax(), Fact::Unchecked(read.clone()));
+        }
+        if let GlobalKind::Fn(sig) = &mut self.globals[g.index()].kind {
+            sig.unchecked = Some(read);
         }
     }
 }

@@ -240,7 +240,8 @@ impl fmt::Debug for Host {
     }
 }
 
-/// What to check: the root struct, the entry files and the import roots.
+/// What to check: the root struct, the entry files, the import roots and
+/// the opaque fields.
 ///
 /// A host builds one with [`RootSpec::new`] and may then assign its public
 /// fields. Later versions may add fields with defaults, so a `RootSpec`
@@ -266,6 +267,18 @@ pub struct RootSpec {
     pub entries: Vec<PathBuf>,
     /// The directories that files of the root may reference.
     pub import_roots: Vec<ImportRoot>,
+    /// The fields whose types the check leaves open, empty by default.
+    ///
+    /// What the root writes for an opaque field is parsed but not checked,
+    /// and so is every definition that reads one: a right-hand side, a
+    /// `let` value, a function body, a field default or the head of a
+    /// statement. Building a value of a struct that holds an opaque field
+    /// counts as a read. Evaluation stops with `E0619` when it needs an
+    /// opaque field or reaches code that reads one, so a host evaluates
+    /// such a root with [`Checked::eval_selected`](crate::Checked::eval_selected),
+    /// for attributes that do not depend on the opaque fields. A field that
+    /// does not exist fails the check with `E0302`.
+    pub opaque: Vec<FieldName>,
 }
 
 impl RootSpec {
@@ -281,7 +294,45 @@ impl RootSpec {
             root_struct: Some(root_struct.into()),
             entries,
             import_roots,
+            opaque: Vec::new(),
         }
+    }
+}
+
+/// A field of a struct, named by the struct and the field, such as
+/// `System.package`.
+///
+/// The struct is found as the root struct is, among the structs of the
+/// prelude and the entry files.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FieldName {
+    structure: String,
+    field: String,
+}
+
+impl FieldName {
+    /// Returns the name of the field `field` of the struct `structure`.
+    pub fn new(structure: impl Into<String>, field: impl Into<String>) -> Self {
+        Self {
+            structure: structure.into(),
+            field: field.into(),
+        }
+    }
+
+    /// Returns the name of the struct.
+    pub fn structure(&self) -> &str {
+        &self.structure
+    }
+
+    /// Returns the name of the field.
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+}
+
+impl fmt::Display for FieldName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.structure, self.field)
     }
 }
 

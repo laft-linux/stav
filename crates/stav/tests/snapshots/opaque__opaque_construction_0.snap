@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: diagnostics.to_string()
+---
+error[E0619]: a statement reads the opaque field `System.package`
+  --> app/main.stav:1:21
+  label: app/main.stav:1:21: this builds a value of `System`, which holds `System.package`
+  label: app/main.stav:2:10: in this call of `mk`
+  note: every evaluation runs every statement of the root, also one that selects only `system.repos`
+  help: compute the statement without `System.package`, which this evaluation leaves opaque

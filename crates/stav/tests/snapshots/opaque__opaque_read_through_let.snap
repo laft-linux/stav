@@ -1,0 +1,10 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: diagnostics.to_string()
+---
+error[E0619]: `system.repos` needs the opaque field `System.package`
+  --> app/main.stav:10:24
+  label: app/main.stav:10:24: `p` reads `System.package`
+  label: app/main.stav:9:11: `System.package` is read here
+  note: `system.repos.core.url` is needed for the selected attribute `system.repos`
+  help: compute `system.repos` without `System.package`, which this evaluation leaves opaque

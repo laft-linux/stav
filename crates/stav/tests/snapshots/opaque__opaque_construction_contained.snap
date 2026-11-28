@@ -1,0 +1,9 @@
+---
+source: crates/stav/tests/opaque.rs
+expression: diagnostics.to_string()
+---
+error[E0619]: `s.items` needs the opaque field `S.package`
+  --> app/main.stav:3:24
+  label: app/main.stav:3:24: this builds a value of `S`, which holds `S.package`
+  note: `s.items.a` is needed for the selected attribute `s.items`
+  help: compute `s.items` without `S.package`, which this evaluation leaves opaque

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::builtins::length;
 use super::env::Env;
 use super::expr::Cx;
-use super::merge::{NodeId, SpanTree};
+use super::merge::{NodeId, Seg, Selected, SpanTree};
 use super::val::{RefVal, Val};
 use super::{Eval, R, Stop};
 use crate::check::suggest::did_you_mean;
@@ -16,15 +16,101 @@ use crate::span::SourceSpan;
 use crate::value::{AttrPath, Value};
 
 impl<'c> Eval<'c> {
-    /// Checks the merged value of the root, and returns it in its public
-    /// form with the span index and the symbols it holds.
-    pub(crate) fn finish(&mut self, root: &Val) -> R<(Value, SpanTree, Vec<Symbol>)> {
-        self.final_refinements(NodeId::ROOT)?;
-        let value = root.to_value(&self.c.types, &self.c.import_roots);
-        self.check_refs(root, &value);
+    /// Checks the merged values of the selected attributes, and returns the
+    /// value of the root that holds them, in its public form, with the span
+    /// index and the symbols they hold. References are checked only when
+    /// the root is selected.
+    pub(crate) fn finish(
+        &mut self,
+        found: &[(Selected, Val)],
+        paths: &[Vec<Seg>],
+    ) -> R<(Value, SpanTree, Vec<Symbol>)> {
+        for (selected, _) in found {
+            if let Selected::Node(n) = selected {
+                self.final_refinements(*n)?;
+            }
+        }
         let mut symbols = Vec::new();
-        self.collect_symbols(root, &mut Vec::new(), &mut symbols);
-        Ok((value, self.walk_spans(), symbols))
+        if let Some((_, root)) = found
+            .iter()
+            .find(|(selected, _)| matches!(selected, Selected::Node(NodeId::ROOT)))
+        {
+            let value = root.to_value(&self.c.types, &self.c.import_roots);
+            self.check_refs(root, &value);
+            self.collect_symbols(root, &mut Vec::new(), &mut symbols);
+            return Ok((value, self.walk_spans(&[NodeId::ROOT]), symbols));
+        }
+        let ends: Vec<(&[Seg], End<'_>)> = found
+            .iter()
+            .zip(paths)
+            .map(|((selected, value), path)| match *selected {
+                Selected::Node(_) => (path.as_slice(), End::Value(value)),
+                Selected::Absent(depth) => (&path[..depth], End::Absent),
+                Selected::Missing(depth) => (&path[..depth], End::Missing),
+            })
+            .collect();
+        let value = self.partial(self.c.root, &ends);
+        let roots: Vec<NodeId> = found
+            .iter()
+            .filter_map(|(selected, _)| match selected {
+                Selected::Node(n) => Some(*n),
+                _ => None,
+            })
+            .collect();
+        let roots = self.outermost(&roots);
+        for &n in &roots {
+            if let Some(value) = self.final_value(n) {
+                let mut path = self.attr_path(n).keys().to_vec();
+                self.collect_symbols(&value, &mut path, &mut symbols);
+            }
+        }
+        Ok((value, self.walk_spans(&roots), symbols))
+    }
+
+    /// Returns the struct value of type `s` with only the fields that lead
+    /// to the ends of the selected paths, relative to it.
+    fn partial(&self, s: StructId, ends: &[(&[Seg], End<'_>)]) -> Value {
+        let def = self.c.types.structure(s);
+        let mut fields = Vec::new();
+        for (i, field) in def.fields.iter().enumerate() {
+            let seg = Seg::Field(u32::try_from(i).unwrap_or(u32::MAX));
+            let here: Vec<&(&[Seg], End<'_>)> = ends
+                .iter()
+                .filter(|(path, _)| path.first() == Some(&seg))
+                .collect();
+            let at_field = |want: fn(&End<'_>) -> bool| {
+                here.iter()
+                    .find(|(path, end)| path.len() == 1 && want(end))
+                    .map(|(_, end)| *end)
+            };
+            if let Some(End::Value(value)) = at_field(|e| matches!(e, End::Value(_))) {
+                fields.push((
+                    field.name.clone(),
+                    value.to_value(&self.c.types, &self.c.import_roots),
+                ));
+                continue;
+            }
+            if at_field(|e| matches!(e, End::Absent)).is_some() {
+                fields.push((field.name.clone(), Value::None));
+                continue;
+            }
+            let inner: Vec<(&[Seg], End<'_>)> = here
+                .iter()
+                .filter(|(path, _)| path.len() > 1)
+                .map(|(path, end)| (&path[1..], *end))
+                .collect();
+            let types = &self.c.types;
+            let ty = types
+                .unwrap_option(field.ty)
+                .unwrap_or_else(|| types.peel(field.ty));
+            if let (false, Some(next)) = (inner.is_empty(), types.as_struct(ty)) {
+                fields.push((field.name.clone(), self.partial(next, &inner)));
+            }
+        }
+        Value::Struct {
+            name: def.name.clone(),
+            fields,
+        }
     }
 
     /// Checks the refinements of a value against `ty` and stops at the
@@ -489,4 +575,15 @@ fn number(n: Number) -> String {
         Number::Int(i) => i.to_string(),
         Number::Float(f) => format!("{f:?}"),
     }
+}
+
+/// Where a selected path ends, relative to the struct that holds it.
+#[derive(Debug, Clone, Copy)]
+enum End<'v> {
+    /// At the selected attribute, with its value.
+    Value(&'v Val),
+    /// At an `Option` that is `none`.
+    Absent,
+    /// At an attribute that has no value.
+    Missing,
 }

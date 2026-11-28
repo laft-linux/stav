@@ -102,6 +102,7 @@ The first digits of a code name the area it belongs to.
 | [E0612](#e0612) | a size limit was exceeded |
 | [E0613](#e0613) | a symbol whose text the host rejects |
 | [E0614](#e0614) | a host value that names no input or does not fit its type |
+| [E0619](#e0619) | an evaluation needs the value of an opaque field |
 | [E0701](#e0701) | a file or module that does not exist or cannot be read |
 | [E0702](#e0702) | a path that leaves its import root |
 | [E0703](#e0703) | an import or include cycle |
@@ -2324,6 +2325,12 @@ Write the symbol in a form the host accepts.
 A host evaluated the program with a value for a host module declaration, and the value cannot be used. Either it names a module that the host does not provide, or a name that is no top-level `let` with a type annotation in a host module the program imports, or it does not fit the annotated type. A value does not fit when it is a string where an `Int` is declared, a variant name the sum type does not have, or a struct that leaves out a required field. A struct may leave out a field with a default or an `Option` type, as a struct literal may. Values for a host module that the program does not import are ignored. The `stav` command supplies no host values, so only programs that a host evaluates can report this.
 
 The host gives values only for annotated declarations, in the shape of their types.
+
+### E0619
+
+An evaluation needs the value of a field that the host leaves opaque. A host marks fields opaque when it evaluates a root before it knows their types, and then evaluates only the attributes it selects. What the root writes for an opaque field is not checked, and neither is any right-hand side, `let` value, function body, default or statement head that reads one, or that builds a value of a struct holding one. The evaluation stops when a selected attribute needs an opaque field, through `self`, through its contributions or by containing it, or when it runs an unchecked function, default or statement. A statement runs in every evaluation, whichever attributes are selected. The message names the selected attribute and the opaque field, and the labels show where the field is read. The `stav` command leaves no field opaque, so only programs that a host evaluates can report this.
+
+Compute the selected attribute without the opaque field, or move what reads the field into an attribute that the host does not select.
 
 ## Files, imports and roots
 

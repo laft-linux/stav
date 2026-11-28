@@ -63,6 +63,7 @@ impl<'c> Eval<'c> {
     fn expr_inner(&mut self, cx: &Cx<'_>, e: Expr<'c>, at: SourceSpan) -> R<Val> {
         let (ty, meaning) = match self.fact(cx.unit, e.syntax().index()) {
             Fact::Expr(f) => (f.ty, &f.meaning),
+            Fact::Unchecked(read) => return Err(self.entered(read)),
             _ => return Err(self.bug(cx.file, at.span, "an expression has no facts")),
         };
         match e {
