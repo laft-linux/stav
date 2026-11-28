@@ -1,0 +1,5 @@
+struct Root { ports: List<Int> = [] }
+
+let tls = true
+if tls { ports = [443] } else { ports = [80] }
+for p in [8080, 8443] { ports = [p] }

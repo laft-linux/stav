@@ -1,0 +1,12 @@
+#! entries main.stav overlay.stav
+#- file main.stav
+struct Download {
+  version: Str
+  url:     Str = "https://example.org/tool-#{self.version}.tar.gz"
+}
+
+struct Root { downloads: Map<Str, Download> = {} block download }
+
+download tool { version = "1.2.3" }
+#- file overlay.stav
+download tool { version = force("1.3.0") }

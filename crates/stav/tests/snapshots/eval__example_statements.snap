@@ -1,0 +1,12 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "ports": [
+    443,
+    8080,
+    8443
+  ]
+}

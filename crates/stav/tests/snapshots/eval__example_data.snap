@@ -1,0 +1,18 @@
+---
+source: crates/stav/tests/eval.rs
+expression: output
+---
+--- JSON
+{
+  "settings": {
+    "hosts": [
+      "a",
+      "b"
+    ],
+    "port": 80,
+    "proxy": null,
+    "tls": {
+      "enabled": true
+    }
+  }
+}

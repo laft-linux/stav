@@ -3,7 +3,7 @@
 type Level = debug | info | warn | error
 
 struct Upstream {
-  url:    Str where matches(r"https?://.*")
+  url:    Str where matches(r"https?://.+")
   weight: Int where 1..=100 = 10
 }
 

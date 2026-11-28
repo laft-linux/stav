@@ -1,0 +1,3 @@
+struct Root { settings: Data = {} }
+
+settings = { port = 80, hosts = ["a", "b"], tls = { enabled = true }, proxy = none }

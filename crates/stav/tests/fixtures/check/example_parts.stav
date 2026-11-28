@@ -8,9 +8,9 @@ struct Root { servers: Map<Str, Server> = {} block server }
 
 fn web(name: Str, replicas: Int where 1..=64 = 2) -> Part<Root> = part {
   server "#{name}" {
-    name     = name
+    name     = default(name)
     replicas = default(replicas)
-    env { RUST_LOG = "info" }
+    env { RUST_LOG = default("info") }
   }
 }
 
