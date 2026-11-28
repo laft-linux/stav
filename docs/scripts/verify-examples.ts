@@ -12,6 +12,9 @@
 // Every other `stav` code block is a fragment. It must parse and already be
 // in the layout that `stav fmt` gives it.
 //
+// A line `<!--@include: PATH-->` stands for the file at PATH, relative to the
+// page, as VitePress includes it.
+//
 // The binary is `stav` on the `PATH`, or the one the `STAV` variable names.
 // Pages given as arguments, relative to `docs/`, limit the check to them.
 
@@ -35,6 +38,12 @@ function markdownFiles(dir: string): string[] {
     if (entry.isDirectory()) return markdownFiles(path)
     return entry.name.endsWith('.md') ? [path] : []
   })
+}
+
+function withIncludes(path: string): string {
+  return readFileSync(path, 'utf8').replace(/^<!--@include:\s*(.+?)\s*-->$/gm, (_, target: string) =>
+    withIncludes(join(dirname(path), target)),
+  )
 }
 
 function events(text: string): Event[] {
@@ -95,7 +104,7 @@ const pages = only.length > 0 ? only : markdownFiles(docs).sort()
 
 for (const path of pages) {
   const page = relative(docs, path)
-  const list = events(readFileSync(path, 'utf8'))
+  const list = events(withIncludes(path))
   const scratch = mkdtempSync(join(tmpdir(), 'stav-docs-'))
   for (let i = 0; i < list.length; i++) {
     const event = list[i]

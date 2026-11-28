@@ -87,6 +87,7 @@ The documentation site lives in `docs/`. It is built with VitePress and bun. CI 
 
 - When anything in `docs/` changes, run `bun install` and `bun run build` in `docs/` before committing. The build must succeed, and it fails on dead links. Commit `docs/bun.lock` whenever dependencies change, and keep VitePress pinned to an exact version.
 - Every example must be verified with the `stav` binary. Mark each program with `<!-- file: NAME -->` and each command with `<!-- run: ARGS -->`, followed directly by the exact output, then run `bun run verify` in `docs/` with `stav` on the `PATH` or named by the `STAV` variable. Every other `stav` code block must parse and be laid out as `stav fmt` lays it out. Never write an output by hand. Generate it with the binary.
+- The error code reference is `crates/stav/error-codes.md`. `docs/reference/error-codes.md` includes it, and `stav::explain` compiles it into the crate, so `stav explain` and the page never differ. Edit the file in the crate.
 - Every Stav code block uses the `stav` language, which the site highlights with its own grammar in `docs/.vitepress/stav.tmLanguage.json`. Extend the grammar when the language gains syntax.
 - The prose rules of this file apply to the documentation too. No em-dashes, and no `--`, spaced hyphen or semicolon as a substitute. Write complete sentences. Never reference other projects, languages or design documents.
 
