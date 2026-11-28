@@ -10,3 +10,4 @@ cc e72a36907c1a9791b9b82b51b882547e54f69eb9aa9df58296c1762b821df17e # shrinks to
 cc aefee0b7393126ade39bd86652ed257df4354dedf84f9236aa9089cd02ac5d7a # shrinks to source = "for k, v in (1) {a.a = # note\n1, # note\na =1}\n"
 cc 7e2eb21a69b27e0715ae863f5145066418a50acf8df1183ee45a7346ffc236f4 # shrinks to source = "for k, v in (1) {if (1) {a =(let a = 1,\n\n  a: Str = 1\nin (\"a string that is long enough to push lists over the line width\")[1])}}\n"
 cc 9ca040fca796dc83bf805133494839967f919d296bdff883f6ce6dd715fa708e # shrinks to source = "for k, v in (1) {if (1) {a = # note\n(let a = 1, # note\na: Str = 1\nin 1)}}\n"
+cc eb36efe959cd30343751aafdd96694a67afd7b0924957ab405eecaed5bfebe99 # shrinks to source = "## An alias.\ntype Gen =\n  Str\n"

@@ -17,6 +17,7 @@ mod doc;
 
 use doc::{Doc, column, flat_width, group, if_break, if_flat, indent};
 
+use crate::ast::TypeDecl;
 use crate::diagnostic::Diagnostic;
 use crate::parser::parse;
 use crate::syntax::{NodeKind as N, SyntaxElement, SyntaxNode, SyntaxToken};
@@ -606,7 +607,8 @@ fn listed(node: SyntaxNode<'_>, open: T, close: T, padded: bool) -> Doc<'_> {
 /// Formats a sum type. The variants stay on one line when they fit and their
 /// source text is on one line, and otherwise go one per line after `|`. A
 /// sum with one variant keeps a leading `|` on one line, because without it
-/// the declaration could read as an alias.
+/// the declaration could read as an alias. An alias is written
+/// `type Name = Type`, with the type laid out as in any other place.
 fn type_decl(node: SyntaxNode<'_>) -> Doc<'_> {
     let children: Vec<_> = node.children_with_tokens().collect();
     let Some(eq) = children.iter().position(
@@ -614,6 +616,9 @@ fn type_decl(node: SyntaxNode<'_>) -> Doc<'_> {
     ) else {
         return inline(node);
     };
+    if TypeDecl::cast(node).and_then(TypeDecl::aliased).is_some() {
+        return inline(node);
+    }
     let mut docs = inline_docs(N::TypeDecl, &parts_of(children[..=eq].iter().copied()));
     let leading_pipe = children[eq + 1..]
         .iter()

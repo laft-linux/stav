@@ -63,3 +63,32 @@ fn formatted_fixtures_are_left_unchanged() {
         assert_eq!(formatted, source, "{} changed", path.display());
     }
 }
+
+/// Evaluates `source` as the entry file of the root struct `Root` and
+/// returns its canonical JSON.
+fn evaluate(source: &str) -> String {
+    let host = stav::Host::new(stav::MemoryLoader::new().with_file("app/main.stav", source));
+    let root = stav::RootSpec {
+        root_struct: "Root".to_owned(),
+        entries: vec!["app/main.stav".into()],
+        import_roots: vec![stav::ImportRoot::new("app")],
+    };
+    stav::check(&host, &root)
+        .and_then(|checked| checked.eval(&stav::Limits::default()))
+        .map(|evaluated| evaluated.to_canonical_json())
+        .unwrap_or_else(|diagnostics| panic!("{source:?} fails:\n{diagnostics}"))
+}
+
+#[test]
+fn formatting_aliases_keeps_the_value() {
+    let sources = [
+        "type Port =\n  Int where 1..=65535\nstruct Root { p: Port = 80 }\n",
+        "struct S { a: Int = 0 }\ntype Cfg =\n  S\nstruct Root { s: Cfg = {} }\n",
+        "type H = Fn(\n  Str,\n) -> Bool\nfn run(h: H) -> Bool = h(\"x\")\nstruct Root { ok: Bool = run(fn(s: Str) = s == \"x\") }\n",
+        "type Name = Str where matches(r\"[a-z][a-z0-9_-]*[a-z0-9]\") && nonEmpty && isShortEnoughForTheNameField\nfn isShortEnoughForTheNameField(s: Str) -> Bool = len(s) < 20\nstruct Root { n: Name = \"ab\" }\n",
+    ];
+    for source in sources {
+        let formatted = format(source).expect("the source has no errors");
+        assert_eq!(evaluate(source), evaluate(&formatted), "{formatted}");
+    }
+}

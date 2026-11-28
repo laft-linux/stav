@@ -95,6 +95,7 @@ The formatter works on the lossless syntax tree, so it never changes what a prog
 - Each statement, field, variant and `match` arm goes on its own line. Commas that separate statements in a body that spans several lines become line breaks.
 - A body, struct declaration or sum type written on one line stays on one line when it fits.
 - A sum type on one line has no `|` before its first variant, except a sum with one variant, which keeps a leading `|` as written, as in `type Color = | Red`.
+- An alias is written `type Name = Type` on one line, with the type laid out as it is in a field, and never with a `|` before it.
 - Lists, maps, argument lists and parameter lists stay on one line when they fit in 100 columns. Otherwise they put one element on each line, with a trailing comma.
 - Runs of consecutive attributes, map entries, `let` bindings and `match` arms align their `=` or `=>`, and runs of consecutive struct fields align their types. A run is not aligned when its longest key is longer than 24 characters.
 - Binary operators, `=`, `=>` and `->` have one space on each side. `:` has one space after it and none before it.

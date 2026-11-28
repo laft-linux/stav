@@ -719,6 +719,8 @@ mod program {
                         false => format!("type Gen = {}", variants.join(" | ")),
                     }
                 }),
+            (ty(), select(&[" ", "\n  ", " # note\n  "][..]))
+                .prop_map(|(ty, gap)| format!("## An alias.\ntype Gen ={gap}{ty}")),
             (prop::collection::vec(param, 0..4), ty(), gap(), expr()).prop_map(
                 |(params, ret, gap, body)| {
                     format!("fn gen({}) -> {ret} ={gap}{body}", params.join(", "))
@@ -835,4 +837,26 @@ fn aliases_stay_on_one_line() {
         "type Handler = Fn(Str) -> Bool\n"
     );
     assert_eq!(fmt("type Color = Red\n"), "type Color = Red\n");
+}
+
+#[test]
+fn an_alias_over_several_lines_joins_one_line() {
+    assert_eq!(
+        fmt("type Port =\n  Int where 1..=65535\n"),
+        "type Port = Int where 1..=65535\n"
+    );
+    assert_eq!(fmt("type Cfg =\n  S\n"), "type Cfg = S\n");
+    assert_eq!(
+        fmt("type H = Fn(\n  Str,\n) -> Bool\n"),
+        "type H = Fn(Str) -> Bool\n"
+    );
+}
+
+#[test]
+fn a_long_alias_breaks_inside_its_type_without_a_bar() {
+    let source = "type Name = Str where matches(r\"[a-z][a-z0-9_-]*[a-z0-9]\") && nonEmpty && isLowercaseAndShortEnoughForUs\n";
+    assert_eq!(
+        fmt(source),
+        "type Name = Str where matches(\n  r\"[a-z][a-z0-9_-]*[a-z0-9]\",\n) && nonEmpty && isLowercaseAndShortEnoughForUs\n"
+    );
 }
