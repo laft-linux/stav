@@ -766,3 +766,24 @@ fn evaluation_ignores_the_environment_and_the_working_directory() {
         )
     );
 }
+
+#[test]
+fn explain_prints_the_entry_of_a_code() {
+    let dir = fixture("explain_prints_the_entry_of_a_code", &[]);
+    let output = stav(&dir, &["explain", "E0501"], "");
+    assert!(output.starts_with("status: 0\n--- stdout\nTwo or more contributions"));
+    assert!(output.contains("```stav\n"));
+    assert!(output.contains("error[E0501]: conflicting values for `port`"));
+    assert!(output.ends_with("--- stderr\n"));
+}
+
+#[test]
+fn explain_refuses_an_unknown_code() {
+    let dir = fixture("explain_refuses_an_unknown_code", &[]);
+    assert_snapshot!(stav(&dir, &["explain", "E9999"], ""), @"
+    status: 2
+    --- stdout
+    --- stderr
+    error: `E9999` is not a Stav diagnostic code
+    ");
+}

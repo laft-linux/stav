@@ -6,6 +6,7 @@ The `stav` command formats, type checks and evaluates Stav programs. It is the `
 stav fmt [--check] <PATH>...
 stav check [OPTIONS] <ENTRY>
 stav eval [OPTIONS] <ENTRY>
+stav explain <CODE>
 ```
 
 `stav help <COMMAND>` and `stav <COMMAND> --help` describe every option, and `stav --version` prints the version.
@@ -229,6 +230,20 @@ error[E0804]: cannot render `port` as TOML: TOML needs a table at the top
 ### Fuel
 
 `--fuel` sets the step limit. Raise it for a program that legitimately needs more work, or lower it to keep untrusted input cheap. The other limits keep their defaults. [Totality and limits](/reference/totality) describes how steps are counted.
+
+## `stav explain`
+
+`stav explain` prints the explanation of a diagnostic code: when it is reported, a small program that reports it with the output, and how to fix it. The text is the entry of the code in [Error codes](/reference/error-codes), in Markdown.
+
+<!-- run: explain E0104 -->
+
+````text
+An identifier is longer than 255 bytes. The message says how long it is.
+
+Shorten the identifier to at most 255 bytes.
+````
+
+An unknown code is a usage error, with exit status 2.
 
 ## Selecting a program
 

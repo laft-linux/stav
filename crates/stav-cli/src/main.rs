@@ -51,6 +51,12 @@ enum Command {
     Check(run::RootArgs),
     /// Type checks and evaluates a program, and prints its value.
     Eval(run::EvalArgs),
+    /// Prints the explanation of a diagnostic code, with an example and
+    /// its fix.
+    Explain {
+        /// The code, such as E0501 or W0302.
+        code: String,
+    },
 }
 
 /// How a command ended, ordered from best to worst.
@@ -69,6 +75,7 @@ fn main() -> ExitCode {
         Command::Fmt { check, paths } => fmt::run(paths, *check, &emitter),
         Command::Check(args) => run::check(args, &emitter),
         Command::Eval(args) => run::eval(args, &emitter),
+        Command::Explain { code } => return explain(code),
     };
     match result {
         Ok(Status::Success) => ExitCode::SUCCESS,
@@ -80,6 +87,21 @@ fn main() -> ExitCode {
             let _ = writeln!(io::stderr().lock(), "error: {error}");
             ExitCode::from(3)
         }
+    }
+}
+
+/// Prints the explanation of `code`. An unknown code is a usage error.
+fn explain(code: &str) -> ExitCode {
+    let Some(text) = stav::explain(code) else {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "error: `{code}` is not a Stav diagnostic code"
+        );
+        return ExitCode::from(2);
+    };
+    match io::stdout().lock().write_all(text.as_bytes()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::from(3),
     }
 }
 
