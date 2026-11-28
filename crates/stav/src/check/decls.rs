@@ -69,15 +69,18 @@ pub(crate) struct Alias<'p> {
     pub(crate) span: Span,
     /// The type as written.
     pub(crate) ty: ast::Type<'p>,
+    /// How far the type is resolved.
     pub(crate) state: AliasState,
 }
 
 /// How far the type of an alias is resolved.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum AliasState {
+    /// Not resolved yet.
     Pending,
     /// Being resolved, so a use now refers to the alias itself.
     InProgress,
+    /// Resolved to this type.
     Done(TypeId),
 }
 

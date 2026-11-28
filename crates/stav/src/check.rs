@@ -551,8 +551,6 @@ impl<'p> Checker<'p> {
         self.check_totality();
     }
 
-    /// Returns the diagnostics, and what the evaluator needs when none of
-    /// them is an error.
     /// Returns the structs that the target of each implicit reference
     /// names: the structs of that name, and the structs that aliases of
     /// that name stand for.
@@ -580,6 +578,8 @@ impl<'p> Checker<'p> {
             .collect()
     }
 
+    /// Returns the diagnostics, and what the evaluator needs when none of
+    /// them is an error.
     fn finish(mut self) -> (Vec<FileDiagnostic>, Option<Parts>) {
         self.diagnostics
             .sort_by_key(|d| (d.file, d.diagnostic.span.start, d.diagnostic.span.end));
